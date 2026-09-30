@@ -47,10 +47,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS for the web frontend
+# CORS for the web frontend.
+# Restricted to the local demo origins by default. Set FRONTEND_ORIGINS
+# (comma-separated) to add the real deployment origin(s) before shipping.
+_DEFAULT_ORIGINS = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173"
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", _DEFAULT_ORIGINS).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your frontend domain
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,7 +68,8 @@ app.add_middleware(
 # Shared system instance (agents are stateless, so this is safe)
 _system = VariantInterpretationSystem(use_llm=True)
 
-# Demo API key used when the frontend doesn't provide one
+# Demo API key. The frontend sends this explicitly so the authentication step is
+# visible end-to-end; it is NOT injected server-side as a silent fallback.
 DEMO_API_KEY = "demo-clinician-key"
 REVIEW_STORE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "review_signoffs.json")
 
@@ -89,7 +99,13 @@ _REVIEW_SIGNOFFS = _load_review_signoffs()
 # ------------------------------------------------------------------
 class QueryRequest(BaseModel):
     query: str = Field(..., description="Free-text query, e.g. 'Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?'")
-    api_key: Optional[str] = Field(None, description="Optional API key (defaults to demo key)")
+    api_key: Optional[str] = Field(
+        None,
+        description=(
+            "Optional API key. Preferred transport is the X-API-Key header. "
+            "Required either way - requests without a valid key are rejected with 401."
+        ),
+    )
 
 
 class FullPipelineResponse(BaseModel):
@@ -211,9 +227,14 @@ async def health():
 
 
 @app.post("/api/classify", response_model=QueryResponse)
-async def classify(request: QueryRequest):
+async def classify(request: QueryRequest, x_api_key: str = Header(None)):
     """
     Classify a genetic variant through the full 4-agent pipeline.
+
+    Requires an API key, supplied either as an ``X-API-Key`` header (preferred,
+    and what the web frontend sends) or as the ``api_key`` body field. There is
+    no server-side fallback key: an unauthenticated request is rejected with 401
+    so the authentication step is genuinely enforced.
 
     Example:
     {
@@ -224,13 +245,23 @@ async def classify(request: QueryRequest):
     top-K evidence with relevance scores, classification, confidence,
     audit trail, and the final report.
     """
-    # Use the provided API key, or default to the demo key
-    api_key = request.api_key or DEMO_API_KEY
+    # --- Security: authenticate BEFORE any agent runs ---
+    api_key = x_api_key or request.api_key
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Missing API key. Send an X-API-Key header "
+                f"(demo key: {DEMO_API_KEY})."
+            ),
+        )
 
     result = _system.run(request.query, api_key)
 
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        # Distinguish authentication failures (401) from bad queries (400)
+        status = 401 if str(result["error"]).startswith("Access denied") else 400
+        raise HTTPException(status_code=status, detail=result["error"])
 
     return QueryResponse(
         variant_id=result["variant_id"],
@@ -418,6 +449,11 @@ async def create_pdf_report(request: PDFReportRequest):
                   "does not replace qualified genetic counselors, clinicians or laboratory interpretation, and is "
                   "not intended for standalone clinical use. ACMG-style criteria shown here are simplified project "
                   "equivalents and require expert review.", small),
+        Spacer(1, 8),
+        Paragraph("<b>Population-data limitation (fairness):</b> Allele-frequency databases may have uneven "
+                  "representation across ancestry groups. Population frequency evidence should therefore be "
+                  "interpreted cautiously and should not be treated as equally informative for all populations.",
+                  small),
     ]
     doc.build(story)
     buffer.seek(0)

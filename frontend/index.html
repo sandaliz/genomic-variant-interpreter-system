@@ -376,6 +376,7 @@
         </div>
 
         <div class="foot-disclaimer" id="clinicalDisclaimer"></div>
+        <div class="foot-disclaimer" id="fairnessLimitation" style="display:none;"></div>
         <div class="foot-disclaimer">VariantLens · IT3041 academic prototype · BRCA1/BRCA2 only · Not for standalone clinical use.</div>
       </div>
 
@@ -523,13 +524,14 @@ async function classifyVariant(){
   const timer = setInterval(() => { mi = (mi+1) % msgs.length; msgEl.textContent = msgs[mi]; }, 900);
 
   try {
-    // No key prompt in the UI: the API authenticates server-side with its
-    // demo key. Bring-your-own-key use is via the REST API directly.
-    const body = { query };
+    // The demo key is sent explicitly (rather than injected server-side) so the
+    // authentication step is genuinely enforced and visible end-to-end.
+    const DEMO_API_KEY = 'demo-clinician-key';
+    const body = { query, api_key: DEMO_API_KEY };
 
     const response = await fetch('/api/classify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': DEMO_API_KEY },
       body: JSON.stringify(body)
     });
     const data = await response.json();
@@ -729,10 +731,18 @@ function renderResult(data){
     trailEl.innerHTML = '<span class="section-sub">No audit trail recorded.</span>';
   }
 
-  // Disclaimer
+  // Responsible AI: clinical disclaimer + explicit fairness limitation
   const ra = data.responsible_ai || {};
   document.getElementById('clinicalDisclaimer').textContent = ra.clinical_disclaimer ||
     'This system is a decision-support tool. Results must be reviewed by a qualified genetic counselor or clinical geneticist before any clinical decision.';
+
+  const fairnessEl = document.getElementById('fairnessLimitation');
+  if (ra.fairness_limitation){
+    fairnessEl.textContent = ra.fairness_limitation;
+    fairnessEl.style.display = 'block';
+  } else {
+    fairnessEl.style.display = 'none';
+  }
 }
 </script>
 </body>
