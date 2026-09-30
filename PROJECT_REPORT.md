@@ -15,7 +15,16 @@
 | **Solution** | A 4-agent AI decision-support system that retrieves evidence for a variant and produces a transparent, confidence-rated classification |
 | **Target Users** | Genetic counselors, clinical genetics labs, cancer screening programs |
 
+### 1.1 Team and Individual Contributions
+
+| Contributor | Primary subsystem | Supporting work |
+|---|---|---|
+| **Sanulya** | Evidence Retrieval Agent — Information Retrieval (TF-IDF indexing, relevance ranking, top-K) + ClinVar data + `scripts/` | `tests/test_evidence_agent.py`, dataset provenance (`data/DATA_SOURCE.md`) |
+| **Nihindu** | Intake Agent — NLP entity extraction + input sanitization — plus the REST API (`api.py`) and web frontend (`frontend/index.html`) | `tests/test_intake_agent.py`, API/frontend usage documentation |
+| **Nipuni** | Report Agent — summarization + Responsible AI — plus the Gemini client (`llm/`) and the agent communication/security layer (`protocol/`) | `tests/test_llm_resilience.py`, `tests/test_security.py`, `protocol/PROTOCOL.md` |
+| **Sandali** | Classification Agent — ACMG-style rules + LLM reasoning — plus orchestration/integration (`main.py`) | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
 ---
+
 
 ## 2. Problem Statement
 

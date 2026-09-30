@@ -374,10 +374,23 @@ scripts in `scripts/` — see `data/DATA_SOURCE.md`.
 
 ## Team / Contributors
 
-| Member | Contribution |
+Each member owned one major subsystem; tests and documentation for that subsystem
+were owned by the same person, so responsibility was evenly distributed.
+
+| Contributor | Primary responsibility |
 |---|---|
-| Member 1 | Intake Agent (NLP + input sanitization), Security module, Intake Agent tests |
-| Member 2 | Evidence Retrieval Agent (TF-IDF indexing, ranking, top-K), Evidence Agent tests |
-| Member 3 | Report Agent (summarization + responsible AI), Frontend UI, REST API layer |
-| Member 4 | Classification Agent (rule-based + LLM reasoning), Gemini client, Classification Agent tests |
+| **Sanulya** | Evidence Retrieval Agent (Information Retrieval: TF-IDF indexing, ranking, top-K) + ClinVar data + `scripts/` |
+| **Nihindu** | Intake Agent (NLP entity extraction + input sanitization) + REST API (`api.py`) + frontend (`frontend/index.html`) |
+| **Nipuni** | Report Agent (summarization + Responsible AI) + Gemini client (`llm/`) + agent communication/security (`protocol/`) |
+| **Sandali** | Classification Agent (ACMG-style rules + LLM reasoning) + orchestration/integration (`main.py`) |
+
+**Supporting work (tests, evaluation and documentation), distributed per component:**
+
+| Contributor | Supporting work |
+|---|---|
+| Sanulya | `tests/test_evidence_agent.py`, dataset provenance (`data/DATA_SOURCE.md`), evaluation support |
+| Nihindu | `tests/test_intake_agent.py`, API/frontend usage docs |
+| Nipuni | `tests/test_llm_resilience.py`, `tests/test_security.py`, protocol specification (`protocol/PROTOCOL.md`) |
+| Sandali | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
+
 
