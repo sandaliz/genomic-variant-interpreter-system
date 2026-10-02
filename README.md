@@ -95,6 +95,12 @@ The classifier keeps three output layers strictly separate:
   Supporting information only; a high CADD score is never itself an ACMG code.
 - `clinvar_context` + `population_observation` — ClinVar submitter agreement
   and the neutral allele-frequency note. Database context, not ACMG criteria.
+- `review_required` + `coverage_fallback` — always-present booleans surfaced in the
+  API response. `review_required` is true when the evidence-based call disagrees with
+  ClinVar's reviewed consensus, so the result is flagged for human review;
+  `coverage_fallback` is true when the variant was resolved from the ClinVar coverage
+  index instead of the study workbook, with `evidence_limitation` explaining the
+  reduced evidence behind the call.
 
 BS1 ("allele frequency greater than expected for the disorder") is
 **unestablished** in this prototype: it requires a validated disease-specific
@@ -177,7 +183,7 @@ uvicorn api:app --reload --port 8000
 ### 4. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 67 tests
+python3 -m pytest tests/ -v    # 75 tests
 ```
 
 ### 5. Run evaluation

@@ -137,6 +137,9 @@ class FullPipelineResponse(BaseModel):
     retrieval_caveat: Optional[str] = None
     error: Optional[str] = None
     consensus: Optional[dict] = None
+    review_required: bool = False
+    coverage_fallback: bool = False
+    evidence_limitation: Optional[str] = None
 
 
 class PDFReportRequest(BaseModel):
@@ -192,6 +195,9 @@ class QueryResponse(BaseModel):
     retrieval_caveat: Optional[str] = None
     error: Optional[str] = None
     consensus: Optional[dict] = None
+    review_required: bool = False
+    coverage_fallback: bool = False
+    evidence_limitation: Optional[str] = None
 
 
 # ------------------------------------------------------------------
@@ -289,6 +295,9 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
         rsid_lookup_unsupported=result.get("rsid_lookup_unsupported", False),
         retrieval_caveat=result.get("retrieval_caveat"),
         consensus=result.get("consensus"),
+        review_required=result.get("review_required", False),
+        coverage_fallback=result.get("coverage_fallback", False),
+        evidence_limitation=result.get("evidence_limitation"),
     )
 
 
