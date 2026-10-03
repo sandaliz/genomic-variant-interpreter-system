@@ -340,7 +340,7 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Attestation durability** | `db/models.py` (`ReviewSignoff`) | Human sign-offs live in PostgreSQL with an accountable owner (`reviewed_by`); the FK is `ON DELETE SET NULL` so deleting an account cannot erase a clinical attestation |
 | **Account recovery** | `services/password_reset.py`, `services/mailer.py` | Forgotten-password flow: 6-digit code delivered through a pluggable mailer. Codes are stored only as salted SHA-256 digests, are single-use, expire in 10 minutes and burn after 5 attempts; the request endpoint answers identically for unknown addresses so it cannot enumerate accounts |
 | **Subscription lifecycle** | `services/upgrade_service.py` | Upgrade hand-off: a user requests a paid plan, an administrator approves/declines/marks contacted. Approval applies the plan change in the same transaction as the decision; decided states are terminal; the requester keeps their working plan and quota while waiting and is notified by email |
-| **Container isolation** | `Dockerfile`, `.dockerignore` | Non-root runtime user, migrations applied on start, `HEALTHCHECK` on `/healthz`, and `.env` excluded from the image so no API key or signing secret is baked in |
+| **Credential isolation** | `.gitignore`, `.env.example` | `.env` is gitignored and `DATABASE_URL` / `JWT_SECRET_KEY` are supplied per developer or per deployment. The project ships no container image and no infrastructure-as-code file, so there is nothing for a credential to be baked into. Database connections require TLS (`sslmode=require`) |
 
 ---
 
@@ -618,9 +618,6 @@ variant_agent_system/
 ├── .gitignore
 ├── alembic.ini                  # Alembic config
 ├── AUTH.md                      # Auth, plan and quota design documentation
-├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
-├── Dockerfile                   # API image: non-root, migrations on start, healthcheck
-├── .dockerignore                # Keeps .env out of the image
 ├── LICENSE                      # MIT License
 ├── analysis.ipynb               # Data analysis & visualization notebook
 ├── api.py                       # FastAPI REST API
@@ -637,11 +634,11 @@ variant_agent_system/
 ```bash
 cd variant_agent_system
 pip install -r requirements.txt
-cp .env.example .env   # add GEMINI_API_KEY (optional — rule-based fallback works)
+cp .env.example .env   # add DATABASE_URL (a free Neon PostgreSQL, no Docker)
+                      # + GEMINI_API_KEY (optional — rule-based fallback works)
                       # + a generated JWT_SECRET_KEY
 
-# Database (account layer)
-docker compose up -d            # PostgreSQL 16 on host port 5433
+# Database (account layer) — the same three commands on macOS, Windows and Linux
 alembic upgrade head
 python scripts/seed_plans.py    # Free / Professional / Enterprise
 python scripts/create_admin.py  # bootstrap admin (password printed once)

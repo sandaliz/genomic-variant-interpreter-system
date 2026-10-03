@@ -172,25 +172,62 @@ If no API key is configured, the system gracefully falls back to deterministic r
 
 ## Setup & Running
 
+### Get running in 5 minutes
+
+Identical on **macOS, Windows and Linux**. The only thing you need beyond Python
+is a free PostgreSQL database — there is no Docker step and nothing to install
+system-wide.
+
+```bash
+git clone <repo-url>
+cd variant_agent_system
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                   # Windows: copy .env.example .env
+```
+
+Create a free database at **https://neon.com** (sign up, *Create project* — no
+credit card) and paste the connection string Neon gives you into `.env` as
+`DATABASE_URL`. Paste it **verbatim**; do not hand-edit it.
+
+```bash
+# one-time schema + reference data
+alembic upgrade head
+python scripts/seed_plans.py        # Free / Professional / Enterprise
+python scripts/create_admin.py      # bootstrap admin; prints the password once
+
+# run it
+uvicorn api:app --reload --port 8000
+```
+
+Open <http://localhost:8000>, register an account, sign in.
+
+**If the first request feels slow:** Neon scales to zero after ~5 minutes idle,
+so the first call after a break takes a second or two while it wakes up. That is
+normal, not a hang.
+
 ### Prerequisites
 - Python 3.10+
-- Docker (for the local PostgreSQL account database)
-- Gemini API key (optional for demos — rule-based fallback works without it)
+- A free PostgreSQL connection string (Neon recommended — works everywhere)
+- Gemini API key *(optional — the Free plan runs rule-based without it)*
 
 ### 1. Install & configure
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env   # add GEMINI_API_KEY + a generated JWT_SECRET_KEY
+pip install -r requirements.txt        # or requirements-api.txt for a lean install
+cp .env.example .env                   # add DATABASE_URL + JWT_SECRET_KEY + GEMINI_API_KEY
 ```
 
-### 2. Start the database and initialise it
+Generate a real signing key with
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+### 2. Initialise the database
 
 ```bash
-docker compose up -d db            # PostgreSQL 16 on host port 5433
-alembic upgrade head               # plans, users, usage_records, review_signoffs
-python scripts/seed_plans.py       # Free / Professional / Enterprise
-python scripts/create_admin.py     # bootstrap admin (password printed once)
+alembic upgrade head          # plans, users, usage_records, review_signoffs,
+                              # password_resets, upgrade_requests
+python scripts/seed_plans.py  # Free / Professional / Enterprise
+python scripts/create_admin.py
 ```
 
 ### 3. Run the CLI
@@ -213,21 +250,11 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 240 tests (no database required)
-python3 scripts/smoke_auth.py  # end-to-end check against real PostgreSQL
+python3 -m pytest tests/ -v    # 240 tests — no database needed at all
+python3 scripts/smoke_auth.py  # end-to-end check against the real PostgreSQL
 ```
 
-### 6. Run the whole stack in Docker
-
-```bash
-docker compose up -d --build   # PostgreSQL + API
-curl localhost:8000/healthz
-```
-
-The image runs as a non-root user, applies migrations on start, and health-checks
-`/healthz`. `.env` is excluded from the image so secrets never get baked in.
-
-### 7. Run evaluation
+### 6. Run evaluation
 
 ```bash
 python3 evaluation.py                    # full suite
@@ -343,8 +370,12 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
   exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
 - **Symmetric encryption** — all agent messages encrypted in transit using Fernet
 - **Full audit logging** with trace IDs for every agent-to-agent message
-- **Container hardening** — the image runs as a non-root user, applies migrations on
-  start, health-checks `/healthz`, and excludes `.env` so no secret is baked in
+- **Secrets stay out of version control** — `.env` is gitignored, and there is no
+  container image to leak them into. Every deployment sets `DATABASE_URL` and
+  `JWT_SECRET_KEY` in its own environment
+- **Encrypted in transit** — the database connection requires TLS (`sslmode=require`)
+- **Cold-start tolerant** — `pool_pre_ping=True` handles a hosted database that
+  scales to zero between requests
 - **Restricted CORS** — allowed origins are explicit (`FRONTEND_ORIGINS`, defaulting to localhost)
   rather than `*`
 
@@ -429,10 +460,7 @@ variant_agent_system/
 │   └── password_reset.py        # Issue + redeem one-time reset codes
 │   ├── password_reset.py        # Issue + redeem one-time reset codes
 │   └── upgrade_service.py       # Upgrade request lifecycle
-├── migrations/                  # Alembic migration for the three tables
-├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
-├── Dockerfile                   # API image (non-root, migrations on start, healthcheck)
-├── .dockerignore                # Keeps .env and local research data out of the image
+├── migrations/                  # Alembic migrations for all six tables
 ├── scripts/
 │   ├── enrich_clinvar_labels.py          # Join ClinVar labels onto the dataset
 │   ├── build_variant_summary_index.py    # Build the BRCA rsID/coverage index

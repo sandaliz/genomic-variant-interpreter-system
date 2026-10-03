@@ -5,6 +5,10 @@ The account/entitlement layer is tested against an in-memory SQLite database so
 the suite stays fast and needs no running PostgreSQL. The model definitions are
 deliberately portable (native_enum=False, generic column types) precisely so
 this is possible; the production path is PostgreSQL via DATABASE_URL.
+
+That also means a contributor can run the whole suite with no .env file at all:
+the placeholder DATABASE_URL below satisfies the db.database import, and no test
+ever connects to it.
 """
 
 import os
@@ -17,6 +21,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Set before db.database is imported, which raises without it. The URL is never
+# dialled: every test overrides get_db with its own SQLite engine.
+os.environ.setdefault("DATABASE_URL", "postgresql://unused:unused@localhost/unused")
 
 # Imported for side effects: db.models must be registered on Base.metadata
 # before create_all() runs, otherwise the tables would not exist.

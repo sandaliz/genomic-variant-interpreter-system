@@ -94,8 +94,8 @@ class LogMailer(Mailer):
 
     def send(self, to_email: str, subject: str, body: str,
              secret: Optional[str] = None) -> bool:
-        # The body already carries the code for a reset mail; this line makes it
-        # findable in `docker compose logs api` without reading the body.
+        # The body already carries the code for a reset mail; this line repeats
+        # it so it is greppable in the server log without reading the body.
         logger.info("mail[log] to=%s subject=%r%s", to_email, subject,
                     f" code={secret}" if secret else "")
         print(f"[mail:log] to={to_email} subject={subject!r}"

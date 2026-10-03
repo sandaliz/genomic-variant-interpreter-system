@@ -45,19 +45,19 @@ without touching the agentic core.
 | `tests/test_cache_isolation.py` | Cached results are scoped per account |
 | `scripts/import_review_signoffs.py` | Backfills the pre-migration JSON store |
 | `scripts/smoke_auth.py` | End-to-end check against real PostgreSQL |
-| `Dockerfile` / `requirements-api.txt` | Container image and its runtime deps |
+| `requirements-api.txt` | Runtime dependency set, separate from the notebook stack |
 
 ---
 
-## 3. Running it locally
+## 3. Running it
 
 ```bash
-# 1. Database (Compose publishes PostgreSQL on host port 5433)
-docker compose up -d db
+# 1. Database — a free PostgreSQL at https://neon.com, no credit card.
+#    Paste its connection string into .env as DATABASE_URL, verbatim.
 
 # 2. Environment
 cp .env.example .env
-#   add GEMINI_API_KEY (optional — Free plan runs rule-based without it)
+#   add DATABASE_URL, plus GEMINI_API_KEY (optional — Free plan runs rule-based)
 #   generate a real signing key:
 #   python -c "import secrets; print(secrets.token_urlsafe(48))"
 
@@ -72,8 +72,16 @@ uvicorn api:app --reload --port 8000
 
 Open <http://localhost:8000>, register an account, sign in, and run a query.
 
-> Host port **5433 → container 5432**, because 5432 is normally taken by a local
-> PostgreSQL install. Change `DATABASE_URL` if your port differs.
+**Why a hosted database:** the team works across macOS, Windows and Linux. One
+connection string is the only thing that has to be identical everywhere — no
+Docker, no per-OS install instructions. Any PostgreSQL works; Neon just happens
+to be the one that requires no installation. `DATABASE_URL` is required and has
+**no fallback**, so a misconfigured checkout fails immediately with instructions
+rather than a connection error pointing at a localhost port that nothing is
+listening on.
+
+> Neon scales to zero after ~5 minutes idle, so the first request after a pause
+> takes a second or two. `pool_pre_ping=True` handles the wake-up.
 
 ---
 
@@ -381,19 +389,18 @@ the administrator's note on their own profile.
 reportable step that happens before a decision — collapsing it into `pending`
 would hide that from both the user and the audit trail.
 
-## 11. Running it in a container
+## 11. Where the secrets live
 
-```bash
-docker compose up -d --build     # PostgreSQL + API
-curl localhost:8000/healthz
-```
+There is no container image and no infrastructure-as-code file in this project, so
+there is nowhere for a credential to be baked into by accident:
 
-The image (`Dockerfile`) runs as a non-root user, applies `alembic upgrade head`
-before starting uvicorn, and carries a `HEALTHCHECK` against `/healthz`.
-`.dockerignore` excludes `.env` — baking a real API key or signing secret into an
-image would leak it to anyone who can pull it, and it would survive rotation.
-Runtime dependencies are pinned separately in `requirements-api.txt` so the
-image excludes the notebook/plotting stack.
+- `.env` is gitignored, and `DATABASE_URL` / `JWT_SECRET_KEY` are supplied per
+  developer (or per deployment) rather than committed.
+- The database connection requires TLS (`sslmode=require`).
+- `pool_pre_ping=True` means a hosted database that scales to zero between
+  requests does not surface as a stale-connection error.
+- `requirements-api.txt` pins the runtime dependency set separately from the
+  notebook stack, so a server install is lean and auditable.
 
 ---
 
