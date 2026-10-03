@@ -26,6 +26,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -320,13 +321,20 @@ def verify_api_key(x_api_key: str = Header(None)):
         raise HTTPException(status_code=401, detail=str(e))
 
 
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+
+# app.css and app.js are served from here rather than inlined, so the frontend is
+# three reviewable files instead of one very long one. Nothing else is exposed.
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
 @app.get("/")
 async def root():
     """Serve the web frontend."""
-    frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "index.html")
+    frontend_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
     return {"message": "Genomic Variant Interpretation API. See /docs for API documentation."}

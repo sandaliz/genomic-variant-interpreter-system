@@ -412,7 +412,38 @@ until it matters.
 
 ---
 
-## 12. Where the secrets live
+## 12. The web interface
+
+`frontend/` is three files rather than one long page, so each is reviewable:
+
+| File | Contents |
+|---|---|
+| `index.html` | Landing page, workspace, profile, admin dashboard, auth modal |
+| `app.css` | Every style, built from the same `:root` tokens as the report |
+| `app.js` | View switching, auth flows, report rendering, admin dashboard |
+
+Four views, one visible at a time:
+
+| View | Who sees it | What it is |
+|---|---|---|
+| **Landing** | Everyone | What the tool does and four worked examples. **No query bar** — a visitor should understand the product before being asked to sign in |
+| **Workspace** | Signed-in users | The query rail and the report: retrieval evidence, ACMG-style codes, audit timeline, review sign-off, PDF |
+| **Profile** | Signed-in users | Account details, password change, current tier and an upgrade request form |
+| **Admin** | `role=admin` | Analytics cards, a 30-day query chart, the upgrade queue and account controls |
+
+Auth is a **modal** over whatever view you were on, with tabs for sign in
+(username *or* email), register, and forgot-password → code → new password.
+
+A landing example clicked while signed out queues the query and opens the modal;
+after signing in the query is already in the box and the workspace opens. The
+workspace itself is unreachable while signed out, so nobody lands on a page they
+cannot use.
+
+The **Admin** link appears in the header only for `role=admin`, and a clinician
+who navigates there directly is refused by `require_admin` on the endpoint. UI
+visibility is a convenience; the server is the control.
+
+## 13. Where the secrets live
 
 There is no container image and no infrastructure-as-code file in this project, so
 there is nowhere for a credential to be baked into by accident:
@@ -427,7 +458,7 @@ there is nowhere for a credential to be baked into by accident:
 
 ---
 
-## 13. Tests
+## 14. Tests
 
 ```bash
 python3 -m pytest tests/ -v      # 279 tests
@@ -455,7 +486,7 @@ PostgreSQL.
 
 ---
 
-## 14. Security checklist before production
+## 15. Security checklist before production
 
 - [ ] Set a real `JWT_SECRET_KEY`; never rely on the development fallback.
 - [ ] Set `FRONTEND_ORIGINS` to the real deployment origins.

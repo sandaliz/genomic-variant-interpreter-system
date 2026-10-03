@@ -20,7 +20,7 @@
 | Contributor | Primary subsystem | Supporting work |
 |---|---|---|
 | **Sanulya** | Evidence Retrieval Agent — Information Retrieval (TF-IDF indexing, relevance ranking, top-K) + ClinVar data + `scripts/` | `tests/test_evidence_agent.py`, dataset provenance (`data/DATA_SOURCE.md`) |
-| **Nihindu** | Intake Agent — NLP entity extraction + input sanitization — plus the REST API (`api.py`) and web frontend (`frontend/index.html`) | `tests/test_intake_agent.py`, API/frontend usage documentation |
+| **Nihindu** | Intake Agent — NLP entity extraction + input sanitization — plus the REST API (`api.py`) and web frontend (`frontend/`) | `tests/test_intake_agent.py`, API/frontend usage documentation |
 | **Nipuni** | Report Agent — summarization + Responsible AI — plus the Gemini client (`llm/`) and the agent communication/security layer (`protocol/`) | `tests/test_llm_resilience.py`, `tests/test_security.py`, `protocol/PROTOCOL.md` |
 | **Sandali** | Classification Agent — ACMG-style rules + LLM reasoning — plus orchestration/integration (`main.py`) | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
 ---
@@ -582,7 +582,9 @@ variant_agent_system/
 │   ├── clinvar_variant_dataset.xlsx   # 3,009 variants
 │   └── DATA_SOURCE.md
 ├── frontend/
-│   └── index.html               # Modern web UI with pipeline visualization
+│   ├── index.html               # Landing, workspace, profile, admin views + auth modal
+│   ├── app.css                  # Styling, built from the same design tokens
+│   └── app.js                   # Views, auth flows, renderers, admin dashboard
 ├── llm/
 │   └── gemini_client.py         # Gemini API wrapper
 ├── protocol/

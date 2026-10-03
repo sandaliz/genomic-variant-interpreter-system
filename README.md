@@ -334,7 +334,7 @@ The final submission also includes:
 - `ANALYSIS_GUIDE.md` — how to reproduce the analysis notebook and figures.
 - `protocol/PROTOCOL.md` — full agent communication protocol spec (AgentMessage envelope,
   message types, encryption guarantees, a complete worked message flow, audit-trail API).
-- `frontend/index.html` — responsive clinical-style dashboard with retrieval evidence, ACMG-style codes, responsible-AI controls, audit timeline and PDF actions.
+- `frontend/` — the web app in three files: `index.html` (landing page, workspace, profile, admin dashboard and the auth modal), `app.css`, and `app.js`. The landing page explains the tool and offers example queries; the query surface only appears once you are signed in; administrators get an **Admin** link in the header.
 - `POST /api/report/pdf` — server-generated PDF report with evidence summary and reviewer/sign-off fields.
 
 The PDF feature is a **report-generation convenience**, not a claim that the output is a certified clinical document.
@@ -439,7 +439,9 @@ variant_agent_system/
 │   ├── variant_summary_brca.tsv               # BRCA coverage / rsID index (generated)
 │   └── DATA_SOURCE.md                         # provenance + evaluation methodology
 ├── frontend/
-│   └── index.html               # Responsive clinical-style web UI + print/PDF workflow
+│   ├── index.html               # Landing, workspace, profile, admin views + auth modal
+│   ├── app.css                  # All styling, built from the same design tokens
+│   └── app.js                   # Views, auth flows, renderers, admin dashboard
 ├── llm/
 │   └── gemini_client.py         # Gemini API wrapper (bounded retries, graceful fallback)
 ├── protocol/
@@ -512,7 +514,7 @@ were owned by the same person, so responsibility was evenly distributed.
 | Contributor | Primary responsibility |
 |---|---|
 | **Sanulya** | Evidence Retrieval Agent (Information Retrieval: TF-IDF indexing, ranking, top-K) + ClinVar data + `scripts/` |
-| **Nihindu** | Intake Agent (NLP entity extraction + input sanitization) + REST API (`api.py`) + frontend (`frontend/index.html`) |
+| **Nihindu** | Intake Agent (NLP entity extraction + input sanitization) + REST API (`api.py`) + web frontend (`frontend/`: landing page, workspace, profile, admin dashboard) |
 | **Nipuni** | Report Agent (summarization + Responsible AI) + Gemini client (`llm/`) + agent communication/security (`protocol/`) |
 | **Sandali** | Classification Agent (ACMG-style rules + LLM reasoning) + orchestration/integration (`main.py`) |
 
