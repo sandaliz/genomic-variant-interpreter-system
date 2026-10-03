@@ -43,6 +43,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    """
+    Normalise a stored datetime to aware UTC.
+
+    PostgreSQL returns aware timestamps for DateTime(timezone=True) and SQLite
+    returns naive ones, so comparisons must not assume either dialect.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class Plan(Base):
     """A subscription tier; mirrors the three illustrative plans in the report."""
 
@@ -76,6 +88,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    # Optional human name for the profile page. NULL means the account never set
+    # one, and the UI falls back to the username -- a real name is never required.
+    full_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     # native_enum=False -> VARCHAR + CHECK constraint, portable across
     # PostgreSQL (production and integration tests) and SQLite (fast unit tests).
@@ -100,6 +115,11 @@ class User(Base):
     # ON DELETE SET NULL, so the attestation survives with its reviewer name.
     review_signoffs: Mapped[list["ReviewSignoff"]] = relationship(
         back_populates="reviewer", passive_deletes=True
+    )
+    # Security records outlive the password they protect: deleting an account
+    # must not erase the history of reset codes issued against it.
+    password_resets: Mapped[list["PasswordReset"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -170,3 +190,49 @@ class ReviewSignoff(Base):
 
     def __repr__(self) -> str:
         return f"<ReviewSignoff {self.variant_id} by {self.reviewer_name}>"
+
+
+class PasswordReset(Base):
+    """
+    A one-time password-reset code issued to an account.
+
+    Design notes:
+    * The code is NEVER stored in plaintext -- only a salted SHA-256 digest, so
+      a database leak does not hand out working reset codes.
+    * Single use: consumed_at is stamped on success, and a consumed or expired
+      row can never be replayed.
+    * attempts is capped, so a leaked 6-digit code cannot be brute-forced
+      through the confirm endpoint (there are only a million possibilities).
+    * Rows are kept after use rather than deleted, so "was a reset attempted on
+      this account?" stays answerable for the audit trail.
+    """
+
+    __tablename__ = "password_resets"
+    __table_args__ = (
+        # Lookups always filter by user and then by recency.
+        Index("ix_password_resets_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # Kept for the audit trail even if the account's email later changes.
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    salt: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="password_resets")
+
+    @property
+    def is_usable(self) -> bool:
+        """True while this code can still be redeemed."""
+        return self.consumed_at is None and _as_utc(self.expires_at) > _utcnow()
+
+    def __repr__(self) -> str:
+        state = "consumed" if self.consumed_at else "live"
+        return f"<PasswordReset user={self.user_id} {state}>"

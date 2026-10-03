@@ -84,6 +84,61 @@ Argon2id through `pwdlib`'s recommended configuration. Plaintext is never stored
 logged or returned by any endpoint. `verify_password()` treats a corrupt or legacy
 hash as "wrong password" rather than raising.
 
+### Signing in
+`POST /api/auth/login` accepts **either the username or the email address** in the
+same field. Both columns are matched in a single query rather than guessing from
+the presence of an "@", so a username that looks like an address still works, and
+a pasted address in mixed case still matches (addresses are stored lower-cased).
+
+The failure response is identical for "no such account" and "wrong password", so
+the endpoint cannot be used to enumerate either.
+
+### Forgotten passwords
+A four-step flow: **email → 6-digit code → new password**.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/auth/password-reset/request` | Issue a code to an address |
+| `POST /api/auth/password-reset/confirm` | Redeem it and set a new password |
+
+Properties the implementation holds to:
+
+- **Codes are never stored in plaintext** — only a salted SHA-256 digest, so a
+  database leak does not hand out working codes.
+- **Single use** — a redeemed row is stamped `consumed_at` and cannot be replayed.
+- **10-minute expiry** and **5 attempts**, after which the code is burned. A 6-digit
+  code is only tolerable because the attempt budget makes it useless to brute-force.
+- **A new request supersedes the old one**, so an earlier code cannot be redeemed
+  after a later request.
+- **No enumeration** — requesting a code always answers `200` with the same message
+  whether or not the address exists, and deactivated accounts are skipped silently.
+
+SHA-256 is correct for the *code* precisely because it is a short-lived,
+attempt-limited token, not a password. Passwords use Argon2id.
+
+> A reset replaces the **credential**, not every existing session: tokens already
+> issued remain valid until they expire.
+
+### Delivering the code
+`services/mailer.py` exposes one interface with three transports:
+
+| `MAIL_DELIVERY` | Behaviour |
+|---|---|
+| `log` *(default)* | Prints the message; the API also returns the code as `dev_code` |
+| `resend` | Posts to the Resend API. Needs `RESEND_API_KEY`. **Never** returns the code |
+| `smtp` | stdlib `smtplib`, for an institutional relay |
+
+`log` is the right default here, not a shortcut: demo accounts use `@example.com`
+and `@variantlens.local` addresses that no provider can deliver to anyway.
+
+Two rules the module enforces:
+
+- `echo_secret` is `False` for every real transport, so a code can only ever be
+  echoed back in development.
+- Selecting a real transport **without** its credentials raises
+  `MailConfigurationError` at call time rather than silently dropping reset
+  emails.
+
 ### Tokens
 - HS256 JWT, `sub` = user id, plus `username`, `role`, `iat`, `exp`.
 - Default lifetime 60 minutes (`JWT_EXPIRE_MINUTES`).
@@ -110,7 +165,9 @@ putting `role: "admin"` in a token changes nothing.
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/auth/register` | none | Create an account (always Free, always `clinician`) |
-| POST | `/api/auth/login` | none | Exchange credentials for a token |
+| POST | `/api/auth/login` | none | Exchange credentials (username **or** email) for a token |
+| POST | `/api/auth/password-reset/request` | none | Issue a 6-digit reset code |
+| POST | `/api/auth/password-reset/confirm` | none | Redeem it, set a new password, sign in |
 | GET | `/api/auth/me` | Bearer | Current account, plan, usage, entitlements |
 | POST | `/api/classify` | Bearer | Run the pipeline (quota-metered) |
 | GET | `/api/trail/{variant_id}` | Bearer | Agent-to-agent audit trail |
@@ -301,7 +358,7 @@ image excludes the notebook/plotting stack.
 ## 11. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 192 tests
+python3 -m pytest tests/ -v      # 215 tests
 ```
 
 | File | Tests | Covers |
@@ -311,6 +368,7 @@ python3 -m pytest tests/ -v      # 192 tests
 | `tests/test_classify_api.py` | 16 | 401/403/429, plan gate, usage recording |
 | `tests/test_admin.py` | 31 | role checks, privilege guards, password reset, plan catalogue |
 | `tests/test_review_signoffs.py` | 17 | sign-off persistence, ownership, durability |
+| `tests/test_password_reset.py` | 23 | email login, code hashing, expiry, replay, attempt cap |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
 | existing agent tests | 75 | unchanged four-agent behaviour |
 

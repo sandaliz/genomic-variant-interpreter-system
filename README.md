@@ -214,7 +214,7 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 192 tests (no database required)
+python3 -m pytest tests/ -v    # 215 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end check against real PostgreSQL
 ```
 
@@ -418,7 +418,9 @@ variant_agent_system/
 │   ├── database.py              # Engine, SessionLocal, get_db()
 │   └── models.py                # Plan, User, UsageRecord
 ├── services/
-│   └── entitlement_service.py   # Quota windows, feature gates, usage recording
+│   ├── entitlement_service.py   # Quota windows, feature gates, usage recording
+│   ├── mailer.py                # Pluggable outbound email (log / resend / smtp)
+│   └── password_reset.py        # Issue + redeem one-time reset codes
 ├── migrations/                  # Alembic migration for the three tables
 ├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
 ├── Dockerfile                   # API image (non-root, migrations on start, healthcheck)
@@ -440,6 +442,7 @@ variant_agent_system/
 │   ├── test_classify_api.py
 │   ├── test_admin.py
 │   ├── test_review_signoffs.py
+│   ├── test_password_reset.py
 │   └── test_cache_isolation.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored

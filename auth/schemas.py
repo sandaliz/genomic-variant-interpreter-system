@@ -16,8 +16,34 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
+    # Accepts a username OR an email address; the route resolves both.
+    username: str = Field(min_length=1, max_length=255,
+                          description="Username or email address")
     password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class PasswordResetRequestedResponse(BaseModel):
+    """
+    Always the same shape whether or not the address exists.
+
+    `delivery` names the transport used, and `dev_code` carries the code ONLY
+    when the log transport is active -- so a misconfigured production instance
+    cannot leak codes through the response body.
+    """
+
+    message: str
+    delivery: str
+    dev_code: Optional[str] = None
 
 
 class UserOut(BaseModel):
@@ -26,6 +52,7 @@ class UserOut(BaseModel):
     id: int
     username: str
     email: str
+    full_name: Optional[str] = None
     role: str
     plan_id: int
     is_active: bool
@@ -62,6 +89,10 @@ class MeResponse(BaseModel):
     plan: PlanOut
     usage: UsageSummary
     entitlements: EntitlementsOut
+    # Present only when the endpoint also mints a session (password reset),
+    # so the UI can sign the user in without a second round-trip.
+    access_token: Optional[str] = None
+    expires_in: Optional[int] = None
 
 
 class TokenResponse(BaseModel):
