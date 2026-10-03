@@ -339,7 +339,49 @@ stored in a gitignored file has no owner, no backup and no audit trail. See
 [REVIEW_SIGNOFF_WORKFLOW.md](REVIEW_SIGNOFF_WORKFLOW.md) for the workflow and
 `scripts/import_review_signoffs.py` for backfilling an existing JSON store.
 
-## 10. Running it in a container
+## 10. Upgrades: a hand-off, not a checkout
+
+There is **no payment integration**, and that is deliberate. What is modelled is
+the part that is honest and interesting: who asked for what, who decided, and
+when. Flipping a plan on a self-serve request would make the commercialization
+story look finished when it is not.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /api/upgrade-requests` | user | Ask for a paid plan |
+| `GET /api/upgrade-requests/mine` | user | This account's request history |
+| `GET /api/admin/upgrade-requests` | admin | The queue, with requester contact details |
+| `PATCH /api/admin/upgrade-requests/{id}` | admin | `approved` / `declined` / `contacted` |
+
+Lifecycle:
+
+```
+pending ──> contacted ──> approved   (applies the plan change)
+           └─────────────> declined
+```
+
+Rules, enforced in `services/upgrade_service.py` so they hold whichever endpoint
+is called:
+
+- **Only paid plans are requestable.** Free is the starting tier, not an upgrade.
+- **You cannot request the plan you are already on.**
+- **One open request per account.** A declined or contacted request still blocks
+  a second, so the admin is never chasing duplicates.
+- **`approved` and `declined` are terminal.** A decided request cannot be
+  re-opened, which keeps the history readable.
+- **Approval applies the plan change in the same transaction as the decision**, so
+  the two can never disagree — a test asserts `/api/auth/me` actually reports the
+  new plan and its entitlements immediately after.
+
+Requesting changes **nothing**: the account keeps its working plan and quota
+while it waits. The requester is emailed when a decision is made, and can read
+the administrator's note on their own profile.
+
+`contacted` exists as its own state because "the admin reached out" is a real,
+reportable step that happens before a decision — collapsing it into `pending`
+would hide that from both the user and the audit trail.
+
+## 11. Running it in a container
 
 ```bash
 docker compose up -d --build     # PostgreSQL + API
@@ -355,10 +397,10 @@ image excludes the notebook/plotting stack.
 
 ---
 
-## 11. Tests
+## 12. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 215 tests
+python3 -m pytest tests/ -v      # 240 tests
 ```
 
 | File | Tests | Covers |
@@ -369,6 +411,7 @@ python3 -m pytest tests/ -v      # 215 tests
 | `tests/test_admin.py` | 31 | role checks, privilege guards, password reset, plan catalogue |
 | `tests/test_review_signoffs.py` | 17 | sign-off persistence, ownership, durability |
 | `tests/test_password_reset.py` | 23 | email login, code hashing, expiry, replay, attempt cap |
+| `tests/test_upgrades.py` | 25 | upgrade lifecycle, plan swap, terminal states |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
 | existing agent tests | 75 | unchanged four-agent behaviour |
 
@@ -380,7 +423,7 @@ PostgreSQL.
 
 ---
 
-## 12. Security checklist before production
+## 13. Security checklist before production
 
 - [ ] Set a real `JWT_SECRET_KEY`; never rely on the development fallback.
 - [ ] Set `FRONTEND_ORIGINS` to the real deployment origins.

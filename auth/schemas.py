@@ -100,3 +100,45 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserOut
+
+
+# ------------------------------------------------------------------
+# Upgrade requests
+# ------------------------------------------------------------------
+class UpgradeRequestCreate(BaseModel):
+    target_plan_id: int
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class UpgradeRequestOut(BaseModel):
+    """A request as the requesting user sees it."""
+
+    id: int
+    target_plan: str
+    target_plan_id: int
+    note: Optional[str] = None
+    status: str
+    admin_note: Optional[str] = None
+    created_at: Optional[str] = None
+    decided_at: Optional[str] = None
+
+
+class AdminUpgradeRequestOut(UpgradeRequestOut):
+    """
+    A request as an administrator sees it.
+
+    Carries the requester's identity because the hand-off is a conversation:
+    the admin needs to know who to reply to, not just what was asked for.
+    """
+
+    user_id: int
+    username: str
+    email: str
+    current_plan: str
+
+
+class UpgradeDecision(BaseModel):
+    """Administrator action on a pending request."""
+
+    status: str = Field(description="approved, declined or contacted")
+    admin_note: Optional[str] = Field(default=None, max_length=500)

@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from io import BytesIO
@@ -41,15 +41,26 @@ from sqlalchemy.orm import Session
 from main import VariantInterpretationSystem
 from protocol.security import authenticate, AuthenticationError
 from auth.dependencies import get_current_user, require_admin
+from auth.schemas import (
+    UpgradeDecision,
+    UpgradeRequestCreate,
+)
 from auth.security import hash_password
 from auth.routes import router as auth_router
 from db.database import get_db
-from db.models import ALLOWED_ROLES, Plan, ReviewSignoff, User
+from db.models import ALLOWED_ROLES, Plan, ReviewSignoff, UPGRADE_STATUSES, UpgradeRequest, User
 from services.entitlement_service import (
     check_quota,
     entitlements,
     record_usage,
     usage_this_month,
+)
+from services.mailer import get_mailer
+from services.upgrade_service import (
+    create_request as upgrade_create,
+    decide,
+    decision_body as upgrade_decision_body,
+    mark_contacted,
 )
 
 
@@ -303,8 +314,7 @@ def verify_api_key(x_api_key: str = Header(None)):
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
     try:
-        user = authenticate(x_api_key)
-        return user
+        return authenticate(x_api_key)
     except AuthenticationError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
@@ -727,6 +737,131 @@ def _active_admin_count(db: Session, exclude_user_id: Optional[int] = None) -> i
     if exclude_user_id is not None:
         query = query.where(User.id != exclude_user_id)
     return int(db.scalar(query) or 0)
+
+
+def _upgrade_payload(request: UpgradeRequest) -> dict:
+    """Serialise an upgrade request as the requesting user sees it."""
+    return {
+        "id": request.id,
+        "target_plan": request.target_plan.name,
+        "target_plan_id": request.target_plan_id,
+        "note": request.note,
+        "status": request.status,
+        "admin_note": request.admin_note,
+        "created_at": request.created_at.isoformat() if request.created_at else None,
+        "decided_at": request.decided_at.isoformat() if request.decided_at else None,
+    }
+
+
+@app.post("/api/upgrade-requests", status_code=status.HTTP_201_CREATED)
+def create_upgrade_request(
+    body: UpgradeRequestCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask to move to a paid plan.
+
+    This does not change the plan -- it puts the request in front of an
+    administrator, who decides. The user keeps their current (working) plan and
+    quota until then, which is the point: nobody loses access while waiting.
+    """
+    request = upgrade_create(db, current_user, body.target_plan_id, body.note)
+    return _upgrade_payload(request)
+
+
+@app.get("/api/upgrade-requests/mine")
+def my_upgrade_requests(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """This account's upgrade history, newest first."""
+    rows = db.scalars(
+        select(UpgradeRequest)
+        .where(UpgradeRequest.user_id == current_user.id)
+        .order_by(UpgradeRequest.created_at.desc())
+    ).all()
+    return {"total": len(rows),
+            "requests": [_upgrade_payload(r) for r in rows]}
+
+
+@app.get("/api/admin/upgrade-requests")
+def admin_list_upgrade_requests(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    The upgrade queue for administrators.
+
+    Includes the requester's name and email: the hand-off is a conversation, so
+    the admin needs to know who to reply to, not just what was asked for.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    query = select(UpgradeRequest).order_by(UpgradeRequest.created_at.desc())
+    if status_filter:
+        if status_filter not in UPGRADE_STATUSES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"status must be one of: {', '.join(UPGRADE_STATUSES)}")
+        query = query.where(UpgradeRequest.status == status_filter)
+    rows = db.scalars(query.limit(limit)).all()
+
+    return {
+        "total": len(rows),
+        "requests": [
+            {
+                **_upgrade_payload(r),
+                "user_id": r.user_id,
+                "username": r.user.username,
+                "email": r.user.email,
+                "current_plan": r.user.plan.name,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.patch("/api/admin/upgrade-requests/{request_id}")
+def admin_decide_upgrade_request(
+    request_id: int,
+    body: UpgradeDecision,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Approve, decline, or mark a request as contacted.
+
+    Approving applies the plan change in the same transaction as the decision,
+    so the two can never disagree. The requester is emailed either way.
+    """
+    row = db.get(UpgradeRequest, request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Upgrade request not found.")
+
+    decision = body.status.strip().lower()
+    if decision == "contacted":
+        row = mark_contacted(db, row, body.admin_note)
+    else:
+        row = decide(db, row, decision, body.admin_note)
+        # Tell the requester. A decision the user never hears about is not a
+        # hand-off.
+        get_mailer().send(
+            to_email=row.user.email,
+            subject=f"Your VariantLens upgrade request was {row.status}",
+            body=upgrade_decision_body(row, row.target_plan.name,
+                                       row.user.username),
+        )
+
+    return {
+        "request": {**_upgrade_payload(row),
+                    "user_id": row.user_id,
+                    "username": row.user.username,
+                    "email": row.user.email,
+                    "current_plan": row.user.plan.name},
+    }
 
 
 @app.get("/api/admin/users")

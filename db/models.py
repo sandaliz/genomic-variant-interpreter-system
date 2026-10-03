@@ -37,6 +37,14 @@ from db.database import Base
 # layer validates against the same source of truth.
 ALLOWED_ROLES = ("admin", "clinician")
 
+# Lifecycle of an upgrade request. `contacted` exists as its own state because
+# "the admin reached out" is a real, reportable step that happens before a
+# decision -- collapsing it into pending would hide that from the user and the
+# audit trail.
+UPGRADE_STATUSES = ("pending", "contacted", "approved", "declined")
+# Only these may ever be transitioned into; approved/declined are terminal.
+DECIDABLE_STATUSES = ("approved", "declined")
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now -- the project uses UTC everywhere for usage."""
@@ -119,6 +127,11 @@ class User(Base):
     # Security records outlive the password they protect: deleting an account
     # must not erase the history of reset codes issued against it.
     password_resets: Mapped[list["PasswordReset"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # Unlike sign-offs, these are the account's own administrative rows, so
+    # they cascade with the account rather than surviving it.
+    upgrade_requests: Mapped[list["UpgradeRequest"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -232,6 +245,62 @@ class PasswordReset(Base):
     def is_usable(self) -> bool:
         """True while this code can still be redeemed."""
         return self.consumed_at is None and _as_utc(self.expires_at) > _utcnow()
+class UpgradeRequest(Base):
+    """
+    A request from an account to move to a paid plan.
+
+    There is no payment integration, and that is deliberate: this models the
+    *hand-off* -- the user asks, an administrator reviews and decides, and the
+    decision is recorded. That is the part worth demonstrating, and pretending
+    to take money would be the dishonest part.
+
+    Lifecycle
+    ---------
+        pending --> contacted --> approved   (applies the plan change)
+                   \-> declined
+
+    approved and declined are terminal: a decided request cannot be quietly
+    re-opened, which keeps the history readable.
+    """
+
+    __tablename__ = "upgrade_requests"
+    __table_args__ = (
+        Index("ix_upgrade_user_created", "user_id", "created_at"),
+        # The admin queue is always "newest first, grouped by status".
+        Index("ix_upgrade_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    target_plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(
+        SAEnum(*UPGRADE_STATUSES, name="upgrade_status", native_enum=False,
+               validate_strings=True),
+        nullable=False,
+        default="pending",
+    )
+    admin_note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped[User] = relationship()
+    target_plan: Mapped[Plan] = relationship(foreign_keys=[target_plan_id])
+
+    @property
+    def is_open(self) -> bool:
+        """True while the request is still awaiting a decision."""
+        return self.status in ("pending", "contacted")
+
+    def __repr__(self) -> str:
+        return f"<UpgradeRequest user={self.user_id} plan={self.target_plan_id} {self.status}>"
 
     def __repr__(self) -> str:
         state = "consumed" if self.consumed_at else "live"

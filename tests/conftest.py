@@ -131,3 +131,22 @@ def login(client):
         return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     return _login
+
+
+@pytest.fixture
+def token_for(db_session):
+    """
+    Mint a bearer header directly for a username.
+
+    Lets one test hold headers for two accounts at once (e.g. a clinician and
+    an administrator acting on the same request) without logging in twice.
+    """
+    from auth.security import create_access_token
+
+    def _token(username):
+        user = db_session.query(User).filter_by(username=username).one()
+        return {
+            "Authorization": f"Bearer {create_access_token(user.id, user.username, user.role)}"
+        }
+
+    return _token

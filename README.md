@@ -151,7 +151,6 @@ enforced **before** any agent runs:
 The agent layer keeps its own API-key check as defence-in-depth, and results are
 cached per identity so one account can never be served another's cached verdict.
 See **[AUTH.md](AUTH.md)** for the full design and endpoint list.
-
 ## Supported Query Types
 
 You don't need special syntax — just ask in plain English:
@@ -214,7 +213,7 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 215 tests (no database required)
+python3 -m pytest tests/ -v    # 240 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end check against real PostgreSQL
 ```
 
@@ -333,6 +332,13 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
   overshoot the limit
 - **Defence in depth** — the agent layer keeps its own API-key check, so a call that
   bypasses FastAPI is still refused; cached results are keyed per identity
+- **Forgot password** — a 6-digit code delivered through a pluggable mailer
+  (`log` / `resend` / `smtp`). Codes are stored only as salted SHA-256 digests,
+  are single-use, expire in 10 minutes and burn after 5 attempts; the request
+  endpoint answers identically for unknown addresses so it cannot enumerate accounts
+- **Plan changes are a hand-off** — a user requests a paid plan, an administrator
+  decides. No payment integration is claimed; the approval applies the plan change
+  in the same transaction as the decision, and decided requests are terminal
 - **Prompt-injection defense** — a regex blocklist rejects system-prompt overrides,
   exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
 - **Symmetric encryption** — all agent messages encrypted in transit using Fernet
@@ -421,6 +427,8 @@ variant_agent_system/
 │   ├── entitlement_service.py   # Quota windows, feature gates, usage recording
 │   ├── mailer.py                # Pluggable outbound email (log / resend / smtp)
 │   └── password_reset.py        # Issue + redeem one-time reset codes
+│   ├── password_reset.py        # Issue + redeem one-time reset codes
+│   └── upgrade_service.py       # Upgrade request lifecycle
 ├── migrations/                  # Alembic migration for the three tables
 ├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
 ├── Dockerfile                   # API image (non-root, migrations on start, healthcheck)
@@ -443,6 +451,7 @@ variant_agent_system/
 │   ├── test_admin.py
 │   ├── test_review_signoffs.py
 │   ├── test_password_reset.py
+│   ├── test_upgrades.py
 │   └── test_cache_isolation.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored
