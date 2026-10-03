@@ -117,7 +117,9 @@
 <!-- ===== 2. Workspace ===== -->
 <section class="view hidden" id="viewWorkspace">
   <div class="app">
-  <label class="field-label" for="query">Query</label>
+
+    <aside class="rail">
+      <label class="field-label" for="query">Query</label>
       <textarea id="query" placeholder="e.g. Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?"></textarea>
 
       <div class="examples" id="examples"></div>
@@ -130,6 +132,8 @@
         an algorithmic estimate from available evidence and must be reviewed by a qualified genetic
         counselor or clinical geneticist before informing any clinical decision.
       </div>
+
+    </aside>
     <main class="stage">
         <div class="banner">
           <span class="dot"></span>
@@ -350,7 +354,7 @@
   </div>
 </section>
 
-</main>
+    </main>
 
 <!-- ===== Auth modal ===== -->
 <div class="modal hidden" id="authModal" role="dialog" aria-modal="true">

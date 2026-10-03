@@ -123,6 +123,65 @@ class TestNoStaleUi:
             assert rule not in without_comments, rule
 
 
+class TestWorkspaceLayout:
+    """
+    The workspace must keep its original two-column shape.
+
+    The rebuild once dropped the <aside class="rail"> element and kept only its
+    contents. Nothing errored: `.rail` is where the panel background, right
+    border, padding, sticky positioning and the mobile single-column layout all
+    live, so losing it silently degraded the whole sidebar to unstyled stacked
+    content. These tests assert the structure that styling depends on.
+    """
+
+    @property
+    def workspace(self):
+        return HTML[HTML.index('id="viewWorkspace"'):HTML.index('id="viewProfile"')]
+
+    def test_rail_and_stage_are_both_present(self):
+        assert '<aside class="rail">' in self.workspace
+        assert '<main class="stage">' in self.workspace
+
+    def test_rail_wraps_the_stage_as_siblings_in_app(self):
+        """The grid needs both children; order matters for column placement."""
+        assert re.search(
+            r'<div class="app">.*<aside class="rail">.*</aside>\s*<main class="stage">',
+            self.workspace, re.S), "rail must precede the stage inside .app"
+
+    def test_query_controls_live_inside_the_rail(self):
+        for control in ('id="query"', 'id="examples"', 'id="submitBtn"'):
+            assert control in self.workspace
+        rail = self.workspace[self.workspace.index('<aside class="rail">'):
+                          self.workspace.index('</aside>')]
+        for control in ('id="query"', 'id="examples"', 'id="submitBtn"'):
+            assert control in rail, f"{control} is outside the rail"
+
+    def test_report_area_lives_inside_the_stage(self):
+        stage = self.workspace[self.workspace.index('<main class="stage">'):]
+        for element in ('id="empty"', 'id="loading"', 'id="results"',
+                        'id="signoffStatus"'):
+            assert element in stage, f"{element} is outside the stage"
+
+    def test_the_rail_has_css(self):
+        """Without the rule the column renders as plain stacked content."""
+        rules = re.findall(r"\.rail\s*\{([^}]*)\}", CSS)
+        assert rules, "no .rail rule in app.css"
+        assert "border-right" in rules[0] or "background" in rules[0]
+        assert "position:sticky" in rules[0]
+
+    def test_the_grid_still_has_two_columns(self):
+        grid = re.search(r"\.app\s*\{([^}]*)\}", CSS)
+        assert grid and "grid-template-columns" in grid.group(1)
+
+    def test_only_one_example_container_exists(self):
+        """Two containers would render every example twice."""
+        assert HTML.count('id="examples"') == 1
+        assert HTML.count('id="landingExamples"') == 1
+
+    def test_the_script_is_loaded_exactly_once(self):
+        assert HTML.count("<script") == 1
+
+
 class TestServedPage:
     """
     The same checks, but against what the server actually serves.

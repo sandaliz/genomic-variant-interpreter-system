@@ -250,7 +250,7 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 316 tests — no database needed at all
+python3 -m pytest tests/ -v    # 324 tests — no database needed at all
 python3 scripts/smoke_auth.py  # end-to-end check against the real PostgreSQL
 ```
 
