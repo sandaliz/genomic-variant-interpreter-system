@@ -616,7 +616,9 @@ variant_agent_system/
 │   ├── test_classify_api.py     # 16 tests — 401/429, plan gate, usage recording
 │   ├── test_admin.py            # 31 tests — roles, privilege guards, password reset
 │   ├── test_review_signoffs.py  # 17 tests — attestation persistence and durability
-│   └── test_cache_isolation.py  # 6 tests — per-account result caching
+│   ├── test_analytics.py       # 19 tests — dashboard figures, gap-filled daily series
+│   ├── test_cache_isolation.py # 6 tests — per-account result caching
+│   └── test_frontend.py        # 37 tests — view visibility, JS/DOM wiring, assets
 ├── analysis_results/            # Generated visualizations for presentations
 │   └── README.md               # Guide to using analysis visualizations
 ├── .env.example                 # API key + DATABASE_URL + JWT_SECRET_KEY template
@@ -658,7 +660,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 279 tests (no database required)
+python3 -m pytest tests/ -v    # 316 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
 # Evaluation
@@ -685,4 +687,4 @@ This project fulfills all assignment requirements:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **215 passing unit tests** (75 agent/protocol + 204 auth/entitlement/role/review)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **215 passing unit tests** (75 agent/protocol + 241 auth/entitlement/role/frontend/review)

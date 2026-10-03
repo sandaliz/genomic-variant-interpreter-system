@@ -434,6 +434,18 @@ Four views, one visible at a time:
 Auth is a **modal** over whatever view you were on, with tabs for sign in
 (username *or* email), register, and forgot-password → code → new password.
 
+Visibility is driven by a single global utility:
+
+```css
+.hidden{display:none !important;}
+```
+
+It is `!important` on purpose. `.modal` is `display:flex`, `.app` is
+`display:grid`, and the views animate — without the utility winning over those,
+every view renders stacked on one page. `tests/test_frontend.py` asserts the rule
+exists, is `!important`, and that each view ships with the class it needs, both in
+the file and as served over HTTP.
+
 A landing example clicked while signed out queues the query and opens the modal;
 after signing in the query is already in the box and the workspace opens. The
 workspace itself is unreachable while signed out, so nobody lands on a page they
@@ -461,7 +473,7 @@ there is nowhere for a credential to be baked into by accident:
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 279 tests
+python3 -m pytest tests/ -v      # 316 tests
 ```
 
 | File | Tests | Covers |
@@ -476,6 +488,7 @@ python3 -m pytest tests/ -v      # 279 tests
 | `tests/test_profile.py` | 20 | profile editing, email-change guard, self-service password change |
 | `tests/test_analytics.py` | 19 | dashboard figures, gap-filled daily series, role checks |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
+| `tests/test_frontend.py` | 37 | view visibility, auth panes, JS↔DOM wiring, served assets |
 | existing agent tests | 75 | unchanged four-agent behaviour |
 
 The account layer is tested against **in-memory SQLite** so the suite needs no

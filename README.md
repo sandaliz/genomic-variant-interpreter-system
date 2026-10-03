@@ -250,7 +250,7 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 279 tests — no database needed at all
+python3 -m pytest tests/ -v    # 316 tests — no database needed at all
 python3 scripts/smoke_auth.py  # end-to-end check against the real PostgreSQL
 ```
 
@@ -485,7 +485,8 @@ variant_agent_system/
 │   ├── test_upgrades.py
 │   ├── test_profile.py
 │   ├── test_analytics.py
-│   └── test_cache_isolation.py
+│   ├── test_cache_isolation.py
+│   └── test_frontend.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored
 ├── AUTH.md                      # Auth, plan and quota design documentation
