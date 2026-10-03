@@ -328,7 +328,7 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 |---|---|---|
 | **Agent-layer authentication** | `protocol/security.py` | API key hashed with SHA-256; `main.py` refuses an untrusted caller before any agent runs (retained as defence-in-depth behind the JWT layer) |
 | **Account authentication** | `auth/security.py`, `auth/dependencies.py` | Argon2id password hashing; HS256 access tokens (60 min). `POST /api/classify`, `/api/trail/*` and `/api/pipeline/*` require `Authorization: Bearer <token>` and return 401 without one. Identity is re-read from PostgreSQL on every request, so deactivation revokes access immediately and the authorization role always comes from the database |
-| **Role-based access** | `auth/dependencies.py` | `require_admin()` guards the read-only `GET /api/admin/users`; a clinician gets 403 |
+| **Role-based access** | `auth/dependencies.py`, `api.py` | `require_admin()` guards `/api/admin/users`, `/api/admin/plans`, `PATCH /api/admin/users/{id}`, password reset and `/api/reviews`; a clinician gets 403. Guards prevent an admin changing their own role/active state, and prevent removing the last active administrator |
 | **Plan feature gating** | `services/entitlement_service.py`, `api.py` | `plan.llm_enabled` selects the LLM or rules-only system instance at request time; Free runs the full four-agent pipeline with rule-based reasoning |
 | **Quota enforcement** | `services/entitlement_service.py` | Per-UTC-month usage rows. Pre-flight `check_quota()` returns 429 before the pipeline runs; `record_usage()` re-checks under a PostgreSQL `SELECT … FOR UPDATE` row lock so concurrent requests cannot overshoot. Deterministic `request_id` keeps client retries from being charged twice |
 | **Input sanitization** | Intake Agent | Rejects SQL/script injection, over-length input, empty queries |
@@ -337,6 +337,8 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Audit logging** | `protocol/message.py` | Every message saved to `MessageLog` with trace IDs |
 | **503 fallback** | `llm/gemini_client.py` + agents | 503/429 across all fallback models → plain `RuntimeError` → rule-based classification + template report (covered by `TestServiceUnavailableCascade`) |
 | **Numpy-safe serialization** | `protocol/message.py` | Custom `NumpyJSONEncoder` handles pandas/numpy types during encryption |
+| **Attestation durability** | `db/models.py` (`ReviewSignoff`) | Human sign-offs live in PostgreSQL with an accountable owner (`reviewed_by`); the FK is `ON DELETE SET NULL` so deleting an account cannot erase a clinical attestation |
+| **Container isolation** | `Dockerfile`, `.dockerignore` | Non-root runtime user, migrations applied on start, `HEALTHCHECK` on `/healthz`, and `.env` excluded from the image so no API key or signing secret is baked in |
 
 ---
 
@@ -585,7 +587,7 @@ variant_agent_system/
 │   └── models.py                # Plan, User, UsageRecord
 ├── services/
 │   └── entitlement_service.py   # Quota windows, feature gates, usage recording
-├── migrations/                  # Alembic migration for the three tables
+├── migrations/                  # Alembic migrations (plans/users/usage, review_signoffs)
 ├── tests/
 │   ├── test_intake_agent.py     # 13 tests
 │   ├── test_evidence_agent.py   # 11 tests
@@ -595,7 +597,8 @@ variant_agent_system/
 │   ├── test_auth.py             # 27 tests — registration, login, JWT
 │   ├── test_entitlements.py     # 19 tests — quotas, month windows, row locking
 │   ├── test_classify_api.py     # 16 tests — 401/429, plan gate, usage recording
-│   ├── test_admin.py            # 10 tests — role-based access
+│   ├── test_admin.py            # 31 tests — roles, privilege guards, password reset
+│   ├── test_review_signoffs.py  # 17 tests — attestation persistence and durability
 │   └── test_cache_isolation.py  # 6 tests — per-account result caching
 ├── analysis_results/            # Generated visualizations for presentations
 │   └── README.md               # Guide to using analysis visualizations
@@ -603,7 +606,9 @@ variant_agent_system/
 ├── .gitignore
 ├── alembic.ini                  # Alembic config
 ├── AUTH.md                      # Auth, plan and quota design documentation
-├── docker-compose.yml           # Local PostgreSQL 16 (host port 5433)
+├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
+├── Dockerfile                   # API image: non-root, migrations on start, healthcheck
+├── .dockerignore                # Keeps .env out of the image
 ├── LICENSE                      # MIT License
 ├── analysis.ipynb               # Data analysis & visualization notebook
 ├── api.py                       # FastAPI REST API
@@ -639,7 +644,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 153 tests (no database required)
+python3 -m pytest tests/ -v    # 192 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
 # Evaluation
@@ -666,4 +671,4 @@ This project fulfills all assignment requirements:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **153 passing unit tests** (75 agent/protocol + 78 auth/entitlement/role)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **192 passing unit tests** (75 agent/protocol + 117 auth/entitlement/role/review)

@@ -102,6 +102,29 @@
   .auth-error{font-size:12px;color:var(--pathogenic);margin-top:8px;}
   .auth-hint{font-size:11.5px;color:var(--ink-faint);line-height:1.5;margin-top:9px;}
 
+  /* ---- Admin panel ---- */
+  .admin-panel{border:1px solid var(--line);border-radius:3px;background:#fff;
+    padding:12px;margin-bottom:20px;}
+  .admin-panel.hidden{display:none;}
+  .admin-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--ink-soft);margin-bottom:10px;}
+  .admin-table{width:100%;border-collapse:collapse;font-size:12px;}
+  .admin-table th{text-align:left;font-weight:700;color:var(--ink-faint);font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.04em;padding:5px 4px;border-bottom:1px solid var(--line);}
+  .admin-table td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  .admin-table tr.inactive td{opacity:.45;}
+  .admin-select{font-size:11.5px;padding:3px 4px;border:1px solid var(--line-strong);
+    border-radius:2px;background:#fff;color:var(--ink);font-family:inherit;}
+  .admin-btn{font-size:11px;padding:4px 8px;border:1px solid var(--line-strong);
+    border-radius:2px;background:#fff;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
+  .admin-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .admin-msg{font-size:11.5px;margin-top:9px;color:var(--ink-soft);}
+  .admin-msg.err{color:var(--pathogenic);}
+  .plan-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;}
+  .plan-card{border:1px solid var(--line);border-radius:2px;padding:8px;background:var(--panel);}
+  .plan-card .pc-name{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+  .plan-card .pc-meta{font-size:11px;color:var(--ink-faint);margin-top:3px;}
+
   /* ---- Main stage ---- */
   .stage{padding:0;}
   .banner{
@@ -302,6 +325,20 @@
         <div class="auth-hint">New accounts start on the Free plan: rule-based reasoning only.</div>
         <div class="auth-error" id="registerError"></div>
       </form>
+    </div>
+
+    <!-- Administrator panel: shown only to role=admin. The endpoints behind it
+         enforce require_admin independently -- this is presentation, not security. -->
+    <div class="admin-panel hidden" id="adminPanel">
+      <div class="admin-title">Administration</div>
+      <div class="plan-cards" id="planCards"></div>
+      <table class="admin-table">
+        <thead>
+          <tr><th>Account</th><th>Plan</th><th>Used</th><th>Active</th></tr>
+        </thead>
+        <tbody id="adminUserBody"></tbody>
+      </table>
+      <div class="admin-msg" id="adminMsg"></div>
     </div>
 
     <label class="field-label" for="query">Query</label>
@@ -532,6 +569,8 @@ async function refreshSession(){
     const res = await fetch('/api/auth/me', { headers: authHeaders() });
     if (!res.ok){ setToken(null); renderSession(null); return; }
     renderSession(await res.json());
+    // The admin panel is only reachable by role=admin; a 403 hides it.
+    loadAdminPanel();
   } catch (err){
     setToken(null);
     renderSession(null);
@@ -619,9 +658,120 @@ async function doRegister(event){
 function logout(){
   setToken(null);
   renderSession(null);
+  document.getElementById('adminPanel').classList.add('hidden');
   latestResult = null;
   document.getElementById('results').style.display = 'none';
   document.getElementById('empty').style.display = 'block';
+}
+
+// ---- Admin panel ----------------------------------------------------
+// Visible only to role=admin. Every call below is authorised server-side by
+// require_admin(), so hiding this panel is a UI affordance, not a control.
+let adminPlans = [];
+
+function adminMessage(text, isError){
+  const el = document.getElementById('adminMsg');
+  el.textContent = text || '';
+  el.className = 'admin-msg' + (isError ? ' err' : '');
+}
+
+function renderPlanCards(plans){
+  const el = document.getElementById('planCards');
+  el.innerHTML = plans.map(p => {
+    const price = p.price_cents === null || p.price_cents === undefined
+      ? 'Custom'
+      : '$' + (p.price_cents / 100).toFixed(2);
+    const limit = p.is_unlimited ? 'Unlimited' : (p.monthly_query_limit + '/mo');
+    return '<div class="plan-card">'
+      + '<div class="pc-name">' + escapeHtml(p.name) + '</div>'
+      + '<div class="pc-meta">' + escapeHtml(price) + ' · ' + escapeHtml(limit) + '</div>'
+      + '<div class="pc-meta">' + p.subscribers + ' account' + (p.subscribers === 1 ? '' : 's') + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function planOptions(selectedId){
+  return adminPlans.map(p =>
+    '<option value="' + p.id + '"' + (p.id === selectedId ? ' selected' : '') + '>'
+    + escapeHtml(p.name) + '</option>').join('');
+}
+
+function renderAdminUsers(users){
+  const body = document.getElementById('adminUserBody');
+  body.innerHTML = '';
+  users.forEach(u => {
+    const tr = document.createElement('tr');
+    if (!u.is_active){ tr.className = 'inactive'; }
+    tr.innerHTML =
+      '<td><div>' + escapeHtml(u.username) + '</div>'
+      + '<div style="color:var(--ink-faint);font-size:11px;">' + escapeHtml(u.email) + '</div>'
+      + '<div style="color:var(--ink-faint);font-size:10.5px;">' + escapeHtml(u.role) + '</div></td>'
+      + '<td><select class="admin-select" onchange="adminChangePlan(' + u.id + ', this.value)">'
+      + planOptions(u.plan_id) + '</select></td>'
+      + '<td>' + u.used_this_month + '</td>'
+      + '<td><button class="admin-btn" onclick="adminToggleActive(' + u.id + ', '
+      + u.is_active + ')">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button></td>';
+    body.appendChild(tr);
+  });
+}
+
+async function loadAdminPanel(){
+  if (!getToken()) return;
+  try {
+    const [usersRes, plansRes] = await Promise.all([
+      authFetch('/api/admin/users?limit=100'),
+      authFetch('/api/admin/plans')
+    ]);
+    // A clinician hitting 403 here is expected, not an error worth showing.
+    if (usersRes.status === 403 || plansRes.status === 403){
+      document.getElementById('adminPanel').classList.add('hidden');
+      return;
+    }
+    if (!usersRes.ok || !plansRes.ok) return;
+
+    adminPlans = (await plansRes.json()).plans;
+    renderPlanCards(adminPlans);
+    renderAdminUsers((await usersRes.json()).users);
+    document.getElementById('adminPanel').classList.remove('hidden');
+  } catch (err){
+    adminMessage('Could not load administration data.', true);
+  }
+}
+
+async function adminChangePlan(userId, planId){
+  adminMessage('Saving…');
+  const res = await authFetch('/api/admin/users/' + userId, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ plan_id: Number(planId) })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok){
+    adminMessage(describeAuthError(body, 'Could not change the plan.'), true);
+    await loadAdminPanel();  // snap the select back to the stored value
+    return;
+  }
+  adminMessage('Plan updated.');
+  await loadAdminPanel();
+}
+
+async function adminToggleActive(userId, currentlyActive){
+  const next = !currentlyActive;
+  adminMessage(next ? 'Activating…' : 'Deactivating…');
+  const res = await authFetch('/api/admin/users/' + userId, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ is_active: next })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok){
+    // 409 here means the guard refused to remove the last active admin.
+    adminMessage(describeAuthError(body, 'Could not change the account state.'), true);
+    await loadAdminPanel();
+    return;
+  }
+  adminMessage(next ? 'Account activated.' : 'Account deactivated.');
+  await loadAdminPanel();
 }
 
 function escapeHtml(s){
@@ -671,7 +821,9 @@ async function saveReview(){
     return;
   }
   try {
-    const res = await fetch(`/api/review/${encodeURIComponent(latestResult.variant_id)}`, {
+    // Sign-offs are stored in PostgreSQL behind the account layer, so this call
+    // needs the bearer token just like /api/classify.
+    const res = await authFetch(`/api/review/${encodeURIComponent(latestResult.variant_id)}`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ reviewer_name: reviewer, review_date: reviewDate, signature: signature || null })
     });
@@ -690,7 +842,7 @@ async function downloadPDF(){
   const btn = document.getElementById('pdfBtn');
   btn.disabled = true; btn.textContent = 'Generating…';
   try {
-    const res = await fetch('/api/report/pdf', {
+    const res = await authFetch('/api/report/pdf', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         variant_id: latestResult.variant_id || 'unknown',

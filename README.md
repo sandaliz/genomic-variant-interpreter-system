@@ -188,10 +188,10 @@ cp .env.example .env   # add GEMINI_API_KEY + a generated JWT_SECRET_KEY
 ### 2. Start the database and initialise it
 
 ```bash
-docker compose up -d            # PostgreSQL 16 on host port 5433
-alembic upgrade head            # plans, users, usage_records
-python scripts/seed_plans.py    # Free / Professional / Enterprise
-python scripts/create_admin.py  # bootstrap admin (password printed once)
+docker compose up -d db            # PostgreSQL 16 on host port 5433
+alembic upgrade head               # plans, users, usage_records, review_signoffs
+python scripts/seed_plans.py       # Free / Professional / Enterprise
+python scripts/create_admin.py     # bootstrap admin (password printed once)
 ```
 
 ### 3. Run the CLI
@@ -214,18 +214,28 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 153 tests (no database required)
+python3 -m pytest tests/ -v    # 192 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end check against real PostgreSQL
 ```
 
-### 6. Run evaluation
+### 6. Run the whole stack in Docker
+
+```bash
+docker compose up -d --build   # PostgreSQL + API
+curl localhost:8000/healthz
+```
+
+The image runs as a non-root user, applies migrations on start, and health-checks
+`/healthz`. `.env` is excluded from the image so secrets never get baked in.
+
+### 7. Run evaluation
 
 ```bash
 python3 evaluation.py                    # full suite
 python3 evaluation.py --sample-size 50 --no-llm  # quick
 ```
 
-### 7. Run analysis notebook (for visualizations)
+### 8. Run analysis notebook (for visualizations)
 
 ```bash
 jupyter notebook analysis.ipynb
@@ -313,6 +323,9 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
 - **Identity re-checked per request** — deactivating or deleting an account
   revokes access immediately, and the `role` used for authorization always comes
   from the database, never from the token
+- **Role-based access with self-lockout guards** — an admin cannot change their own
+  role or active state, and the last active administrator cannot be demoted or
+  deactivated (otherwise recovery needs a database shell)
 - **Plan feature gating** — the Free plan runs the full pipeline with rule-based
   reasoning; LLM-assisted reasoning requires Professional or Enterprise
 - **Monthly quota enforcement** — pre-flight `429` before the pipeline runs, plus a
@@ -324,6 +337,8 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
   exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
 - **Symmetric encryption** — all agent messages encrypted in transit using Fernet
 - **Full audit logging** with trace IDs for every agent-to-agent message
+- **Container hardening** — the image runs as a non-root user, applies migrations on
+  start, health-checks `/healthz`, and excludes `.env` so no secret is baked in
 - **Restricted CORS** — allowed origins are explicit (`FRONTEND_ORIGINS`, defaulting to localhost)
   rather than `*`
 
@@ -405,7 +420,9 @@ variant_agent_system/
 ├── services/
 │   └── entitlement_service.py   # Quota windows, feature gates, usage recording
 ├── migrations/                  # Alembic migration for the three tables
-├── docker-compose.yml           # Local PostgreSQL 16 (host port 5433)
+├── docker-compose.yml           # PostgreSQL 16 (5433) + API service
+├── Dockerfile                   # API image (non-root, migrations on start, healthcheck)
+├── .dockerignore                # Keeps .env and local research data out of the image
 ├── scripts/
 │   ├── enrich_clinvar_labels.py          # Join ClinVar labels onto the dataset
 │   ├── build_variant_summary_index.py    # Build the BRCA rsID/coverage index
@@ -422,6 +439,7 @@ variant_agent_system/
 │   ├── test_entitlements.py
 │   ├── test_classify_api.py
 │   ├── test_admin.py
+│   ├── test_review_signoffs.py
 │   └── test_cache_isolation.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored

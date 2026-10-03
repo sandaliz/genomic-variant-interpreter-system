@@ -16,7 +16,7 @@ import os
 import sys
 import json
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,15 +35,16 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from main import VariantInterpretationSystem
 from protocol.security import authenticate, AuthenticationError
 from auth.dependencies import get_current_user, require_admin
+from auth.security import hash_password
 from auth.routes import router as auth_router
 from db.database import get_db
-from db.models import Plan, User
+from db.models import ALLOWED_ROLES, Plan, ReviewSignoff, User
 from services.entitlement_service import (
     check_quota,
     entitlements,
@@ -90,6 +91,26 @@ _system_rules = VariantInterpretationSystem(use_llm=False)
 _system = _system_llm  # legacy default: behaves exactly as before
 
 
+def _signoff_payload(row: Optional[ReviewSignoff]) -> Optional[dict]:
+    """
+    Serialise a sign-off for the API, or None when there is no row.
+
+    The shape is unchanged from the old JSON store ({reviewer_name, review_date,
+    signature, saved_at}) so the frontend and the PDF report keep working;
+    reviewed_by is added alongside it for the audit trail.
+    """
+    if row is None:
+        return None
+    return {
+        "variant_id": row.variant_id,
+        "reviewer_name": row.reviewer_name,
+        "review_date": row.review_date.isoformat(),
+        "signature": row.signature,
+        "saved_at": row.saved_at.isoformat(timespec="seconds") + "Z",
+        "reviewed_by": row.reviewed_by,
+    }
+
+
 def _history_for(variant_id: str) -> list:
     """
     Audit-trail lookup across both system variants.
@@ -105,30 +126,37 @@ def _history_for(variant_id: str) -> list:
             seen[message.message_id] = message
     return sorted(seen.values(), key=lambda m: str(m.timestamp))
 
-# Demo API key. The frontend sends this explicitly so the authentication step is
-# visible end-to-end; it is NOT injected server-side as a silent fallback.
+# Demo API key used by the agent layer when the API calls into main.py.
+# Review sign-offs live in PostgreSQL (see db/models.py ReviewSignoff), not in a
+# local file, so there is no review store path or in-memory cache any more.
 DEMO_API_KEY = "demo-clinician-key"
-REVIEW_STORE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "review_signoffs.json")
 
-def _load_review_signoffs() -> dict:
-    """Load reviewer sign-off metadata from the local academic prototype store."""
-    try:
-        if os.path.exists(REVIEW_STORE_PATH):
-            with open(REVIEW_STORE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        pass
-    return {}
 
-def _save_review_signoffs(data: dict) -> None:
-    os.makedirs(os.path.dirname(REVIEW_STORE_PATH), exist_ok=True)
-    temp_path = REVIEW_STORE_PATH + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(temp_path, REVIEW_STORE_PATH)
+class UserUpdateRequest(BaseModel):
+    """Fields an administrator may change on another account."""
 
-_REVIEW_SIGNOFFS = _load_review_signoffs()
+    # All optional so a PATCH touches only what was sent. Unknown fields are
+    # rejected by pydantic rather than silently ignored, which stops a typo in a
+    # client's payload from looking like it worked.
+    plan_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    role: Optional[str] = None
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    plan: str
+    plan_id: int
+    created_at: Optional[str] = None
+    used_this_month: int
 
 
 # ------------------------------------------------------------------
@@ -351,6 +379,12 @@ def classify(
     )
     ent = entitlements(current_user, usage_this_month(db, current_user.id))
 
+    # The report response carries the sign-off inline so the UI can render the
+    # review banner without a second request.
+    db_signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == result["variant_id"])
+    ).one_or_none()
+
     return QueryResponse(
         variant_id=result["variant_id"],
         report_text=result["report_text"],
@@ -371,7 +405,9 @@ def classify(
         intent=result["intent"],
         extracted_entities=result["extracted_entities"],
         reasoning_mode=result.get("reasoning_mode", "rule_based"),
-        review_signoff=_REVIEW_SIGNOFFS.get(result["variant_id"]),
+        # Sign-offs come from PostgreSQL now, so this is a lookup rather than a
+        # dict hit. A missing row simply means "not yet signed off".
+        review_signoff=_signoff_payload(db_signoff),
         is_gene_overview=result.get("is_gene_overview", False),
         total_variants_in_gene=result.get("total_variants_in_gene"),
         rsid_lookup_unsupported=result.get("rsid_lookup_unsupported", False),
@@ -395,11 +431,18 @@ def classify(
 
 
 @app.post("/api/review/{variant_id}")
-async def save_review_signoff(variant_id: str, request: ReviewSignoffRequest):
-    """Persist human-review metadata for a generated variant report.
+def save_review_signoff(
+    variant_id: str,
+    request: ReviewSignoffRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Record (or update) a genetic counselor's sign-off for a variant.
 
-    This is intentionally a small local JSON store for the academic prototype;
-    it is not a production clinical records system.
+    Stored in PostgreSQL rather than a local file so the attestation has an
+    accountable owner (reviewed_by), survives restarts and can be listed for
+    audit. One sign-off per variant; re-signing updates the row in place.
     """
     try:
         parsed_date = date.fromisoformat(request.review_date)
@@ -408,30 +451,67 @@ async def save_review_signoff(variant_id: str, request: ReviewSignoffRequest):
     if parsed_date > date.today():
         raise HTTPException(status_code=422, detail="review_date cannot be in the future")
 
-    signoff = {
-        "reviewer_name": request.reviewer_name.strip(),
-        "review_date": request.review_date,
-        "signature": request.signature.strip() if request.signature else None,
-        "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-    }
-    _REVIEW_SIGNOFFS[variant_id] = signoff
-    try:
-        _save_review_signoffs(_REVIEW_SIGNOFFS)
-    except OSError as exc:
-        # Container hosts may have an ephemeral or read-only filesystem;
-        # keep the sign-off for this process rather than failing the request.
-        print(f"[review] persist skipped: {exc}")
-    return {"variant_id": variant_id, "review_signoff": signoff}
+    reviewer = request.reviewer_name.strip()
+    if not reviewer:
+        raise HTTPException(status_code=422, detail="reviewer_name cannot be blank")
+
+    signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == variant_id)
+    ).one_or_none()
+    if signoff is None:
+        signoff = ReviewSignoff(variant_id=variant_id)
+        db.add(signoff)
+    signoff.reviewer_name = reviewer
+    signoff.review_date = parsed_date
+    # A whitespace-only signature is treated as "not signed", not as a blank
+    # string that would render as an empty signature line in the PDF.
+    signoff.signature = (request.signature or "").strip() or None
+    signoff.saved_at = datetime.now(timezone.utc)
+    # Ownership is rewritten on every save, so "which account recorded this"
+    # always reflects the most recent sign-off.
+    signoff.reviewed_by = current_user.id
+    db.commit()
+    db.refresh(signoff)
+    return {"variant_id": variant_id, "review_signoff": _signoff_payload(signoff)}
 
 
 @app.get("/api/review/{variant_id}")
-async def get_review_signoff(variant_id: str):
-    """Return stored human-review metadata for a variant, if present."""
-    return {"variant_id": variant_id, "review_signoff": _REVIEW_SIGNOFFS.get(variant_id)}
+def get_review_signoff(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the stored sign-off for a variant, or null when none exists."""
+    signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == variant_id)
+    ).one_or_none()
+    return {"variant_id": variant_id,
+            "review_signoff": _signoff_payload(signoff) if signoff else None}
+
+
+@app.get("/api/reviews")
+def list_review_signoffs(
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    List recorded sign-offs, newest first.
+
+    Admin-only: this is an attestation register rather than a per-caller view,
+    so it sits behind the same role check as the account listing.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    rows = db.scalars(
+        select(ReviewSignoff).order_by(ReviewSignoff.saved_at.desc()).limit(limit)
+    ).all()
+    return {"total": len(rows),
+            "review_signoffs": [_signoff_payload(row) for row in rows]}
 
 
 @app.post("/api/report/pdf")
-async def create_pdf_report(request: PDFReportRequest):
+async def create_pdf_report(request: PDFReportRequest, db: Session = Depends(get_db)):
     """Create a print-ready academic clinical-style report PDF."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -456,7 +536,12 @@ async def create_pdf_report(request: PDFReportRequest):
         Paragraph(f"<b>Variant:</b> {request.variant_id}", body),
         Spacer(1, 8),
     ]
-    stored_signoff = _REVIEW_SIGNOFFS.get(request.variant_id, {})
+    pdf_row = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == request.variant_id)
+    ).one_or_none()
+    stored_signoff = _signoff_payload(pdf_row) if pdf_row else {}
+    # Values typed into the form win over the stored sign-off, so a reviewer can
+    # correct a date without re-saving the record first.
     reviewer_name = request.reviewer_name or stored_signoff.get("reviewer_name")
     review_date = request.review_date or stored_signoff.get("review_date")
     signature = request.signature or stored_signoff.get("signature")
@@ -616,38 +701,160 @@ def get_trail(variant_id: str, current_user: User = Depends(get_current_user)):
     ]
 
 
+def _admin_user_payload(db: Session, user: User) -> dict:
+    """Serialise an account for the admin endpoints. Never includes a hash."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "plan": user.plan.name,
+        "plan_id": user.plan_id,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "used_this_month": usage_this_month(db, user.id),
+    }
+
+
+def _active_admin_count(db: Session, exclude_user_id: Optional[int] = None) -> int:
+    """
+    Count active administrators other than one account.
+
+    Used to refuse a change that would leave the deployment with no way back
+    in: without an admin, the only fix is a direct database shell.
+    """
+    query = select(func.count(User.id)).where(User.role == "admin", User.is_active.is_(True))
+    if exclude_user_id is not None:
+        query = query.where(User.id != exclude_user_id)
+    return int(db.scalar(query) or 0)
+
+
 @app.get("/api/admin/users")
 def admin_list_users(
     limit: int = 100,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """
-    Read-only account listing for administrators.
-
-    Deliberately read-only in this scope: no create/update/delete, so a
-    compromised admin token cannot escalate or destroy accounts. Password
-    hashes are never returned.
-    """
+    """Account listing for administrators. Password material is never returned."""
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
     users = db.scalars(select(User).order_by(User.id).limit(limit)).all()
+    return {"total": len(users),
+            "users": [_admin_user_payload(db, u) for u in users]}
+
+
+@app.get("/api/admin/plans")
+def admin_list_plans(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Plan catalogue with subscriber counts, for the admin dashboard."""
+    plans = db.scalars(select(Plan).order_by(Plan.id)).all()
     return {
-        "total": len(users),
-        "users": [
+        "total": len(plans),
+        "plans": [
             {
-                "id": u.id,
-                "username": u.username,
-                "email": u.email,
-                "role": u.role,
-                "is_active": u.is_active,
-                "plan": u.plan.name,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
-                "used_this_month": usage_this_month(db, u.id),
+                "id": plan.id,
+                "name": plan.name,
+                "price_cents": plan.price_cents,
+                "monthly_query_limit": plan.monthly_query_limit,
+                "is_unlimited": plan.is_unlimited,
+                "llm_enabled": plan.llm_enabled,
+                "api_access": plan.api_access,
+                "audit_export": plan.audit_export,
+                "subscribers": int(db.scalar(
+                    select(func.count(User.id)).where(User.plan_id == plan.id)
+                ) or 0),
             }
-            for u in users
+            for plan in plans
         ],
     }
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_update_user(
+    user_id: int,
+    body: UserUpdateRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Change another account's plan, active state or role.
+
+    Two guards matter here, and both exist because this endpoint is the one
+    place a token holder can gain or lose reach:
+      * an admin cannot change their own role or active state, so a session
+        cannot lock its own owner out;
+      * a change that would remove the last active administrator is refused,
+        because after that nobody could administer the deployment through the
+        API at all.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    if body.role is not None and body.role not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"role must be one of: {', '.join(ALLOWED_ROLES)}")
+
+    demoting_or_disabling_admin = (
+        target.role == "admin"
+        and ((body.role is not None and body.role != "admin")
+             or body.is_active is False)
+    )
+    if demoting_or_disabling_admin and _active_admin_count(db, exclude_user_id=target.id) == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Refusing to remove the last active administrator. "
+                   "Promote another admin first.")
+
+    self_change = (
+        (body.role is not None and body.role != current_user.role)
+        or body.is_active is not None and body.is_active != current_user.is_active
+    )
+    if target.id == current_user.id and self_change:
+        raise HTTPException(
+            status_code=400,
+            detail="An administrator cannot change their own role or active state.")
+
+    if body.plan_id is not None:
+        plan = db.get(Plan, body.plan_id)
+        if plan is None:
+            raise HTTPException(status_code=422, detail="Unknown plan_id.")
+        target.plan_id = plan.id
+    if body.is_active is not None:
+        target.is_active = body.is_active
+    if body.role is not None:
+        target.role = body.role
+
+    db.commit()
+    db.refresh(target)
+    return {"user": _admin_user_payload(db, target)}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+def admin_reset_password(
+    user_id: int,
+    body: PasswordResetRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Reset another account's password.
+
+    An administrator may also reset their own password this way if they have
+    somehow lost the current one. Any token the target already holds stays valid
+    until it expires -- password reset revokes the credential, not the session.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+    target.password_hash = hash_password(body.new_password)
+    db.commit()
+    # The response deliberately says nothing beyond the outcome: never echo the
+    # new password, and never return the hash.
+    return {"reset": True, "username": target.username}
 
 
 if __name__ == "__main__":

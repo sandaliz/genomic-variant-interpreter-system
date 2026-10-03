@@ -40,7 +40,12 @@ without touching the agentic core.
 | `tests/test_auth.py` | Registration, login, JWT handling |
 | `tests/test_entitlements.py` | Quota arithmetic, month windows, row locking |
 | `tests/test_classify_api.py` | HTTP auth, plan gate, 429 behaviour |
-| `tests/test_admin.py` | Role-based access to `/api/admin/users` |
+| `tests/test_admin.py` | Role-based access, privilege guards, password reset |
+| `tests/test_review_signoffs.py` | Sign-off persistence, ownership, durability |
+| `tests/test_cache_isolation.py` | Cached results are scoped per account |
+| `scripts/import_review_signoffs.py` | Backfills the pre-migration JSON store |
+| `scripts/smoke_auth.py` | End-to-end check against real PostgreSQL |
+| `Dockerfile` / `requirements-api.txt` | Container image and its runtime deps |
 
 ---
 
@@ -48,7 +53,7 @@ without touching the agentic core.
 
 ```bash
 # 1. Database (Compose publishes PostgreSQL on host port 5433)
-docker compose up -d
+docker compose up -d db
 
 # 2. Environment
 cp .env.example .env
@@ -233,22 +238,70 @@ One account can never be served another account's cached result.
 
 ## 8. Admin scope
 
-`GET /api/admin/users` is **read-only** in this scope: no create, update or
-delete, so a compromised admin token cannot escalate privileges or destroy
-accounts. It returns id, username, email, role, `is_active`, plan, creation time
-and current-month usage — **never** password material. `limit` is bounded to
-1–500.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/admin/users` | Account listing (never password material) |
+| `GET /api/admin/plans` | Plan catalogue with subscriber counts |
+| `PATCH /api/admin/users/{id}` | Change plan, active state or role |
+| `POST /api/admin/users/{id}/password` | Reset another account's password |
+| `GET /api/reviews` | Register of recorded human sign-offs |
 
-Deliberately **out of scope** for now: admin CRUD, a billing/dashboard UI,
-migrating review sign-offs from the local JSON store into PostgreSQL, refresh
-tokens, and deployment hardening.
+There is **no account creation** endpoint: self-registration already covers that
+path, and an admin-create endpoint would be a way to mint accounts without the
+registration validation. There is also **no account deletion** — deactivation is
+the reversible equivalent, and deletion is exactly the operation that must not be
+able to erase clinical sign-offs.
+
+Two guards exist on `PATCH`, because it is the one place a token holder can
+gain or lose reach:
+
+```python
+# An admin cannot change their own role or active state...
+if target.id == current_user.id and self_change:
+    raise HTTPException(status_code=400, ...)
+
+# ...and the last active administrator cannot be demoted or deactivated,
+# because afterwards nobody could administer the deployment through the API.
+if demoting_or_disabling_admin and _active_admin_count(db, exclude_user_id=target.id) == 0:
+    raise HTTPException(status_code=409, ...)
+```
+
+The first guard stops a session from locking its own owner out; the second stops
+a deployment from reaching a state where recovery requires a direct database
+shell. Both are covered by tests in `tests/test_admin.py`.
+
+The web UI exposes these to `role=admin` through an Administration panel. That
+panel is **presentation, not a control** — a clinician who hid or forged the
+panel would still get `403` from the endpoints.
+
+## 9. Review sign-offs in PostgreSQL
+
+Sign-offs moved from a local JSON file to a `review_signoffs` table
+(`migrations/versions/0002_review_signoffs.py`), because a clinical attestation
+stored in a gitignored file has no owner, no backup and no audit trail. See
+[REVIEW_SIGNOFF_WORKFLOW.md](REVIEW_SIGNOFF_WORKFLOW.md) for the workflow and
+`scripts/import_review_signoffs.py` for backfilling an existing JSON store.
+
+## 10. Running it in a container
+
+```bash
+docker compose up -d --build     # PostgreSQL + API
+curl localhost:8000/healthz
+```
+
+The image (`Dockerfile`) runs as a non-root user, applies `alembic upgrade head`
+before starting uvicorn, and carries a `HEALTHCHECK` against `/healthz`.
+`.dockerignore` excludes `.env` — baking a real API key or signing secret into an
+image would leak it to anyone who can pull it, and it would survive rotation.
+Runtime dependencies are pinned separately in `requirements-api.txt` so the
+image excludes the notebook/plotting stack.
 
 ---
 
-## 9. Tests
+## 11. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 153 tests
+python3 -m pytest tests/ -v      # 192 tests
 ```
 
 | File | Tests | Covers |
@@ -256,23 +309,26 @@ python3 -m pytest tests/ -v      # 153 tests
 | `tests/test_auth.py` | 27 | hashing, registration, login, JWT tampering/expiry, revocation |
 | `tests/test_entitlements.py` | 19 | month windows, quota math, idempotency, `FOR UPDATE` |
 | `tests/test_classify_api.py` | 16 | 401/403/429, plan gate, usage recording |
-| `tests/test_admin.py` | 10 | role checks, read-only boundary, no hash leakage |
+| `tests/test_admin.py` | 31 | role checks, privilege guards, password reset, plan catalogue |
+| `tests/test_review_signoffs.py` | 17 | sign-off persistence, ownership, durability |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
 | existing agent tests | 75 | unchanged four-agent behaviour |
 
 The account layer is tested against **in-memory SQLite** so the suite needs no
 database server; the models are deliberately portable (`native_enum=False`,
-generic column types) to make that possible. Production and the end-to-end smoke
-check (`python scripts/smoke_auth.py`) run against real PostgreSQL.
+generic column types) to make that possible. Production, the end-to-end smoke
+check (`python scripts/smoke_auth.py`) and the container all run against real
+PostgreSQL.
 
 ---
 
-## 10. Security checklist before production
+## 12. Security checklist before production
 
 - [ ] Set a real `JWT_SECRET_KEY`; never rely on the development fallback.
 - [ ] Set `FRONTEND_ORIGINS` to the real deployment origins.
 - [ ] Terminate TLS in front of the API so bearer tokens are never sent in clear.
 - [ ] Replace the Compose development credentials and restrict the database port.
+- [ ] Confirm `.env` is excluded from the built image before shipping it.
 - [ ] Add refresh-token rotation or short session lifetimes for shared terminals.
 - [ ] Consider an external identity provider; the local password store is intended
       for a prototype, not for regulated clinical data.

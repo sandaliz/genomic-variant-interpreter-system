@@ -14,11 +14,13 @@ Design notes
   when PostgreSQL is not available.
 """
 
+import datetime
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -94,6 +96,11 @@ class User(Base):
     usage_records: Mapped[list["UsageRecord"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    # No cascade: deleting an account must never delete a sign-off. The FK is
+    # ON DELETE SET NULL, so the attestation survives with its reviewer name.
+    review_signoffs: Mapped[list["ReviewSignoff"]] = relationship(
+        back_populates="reviewer", passive_deletes=True
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.username} role={self.role} plan_id={self.plan_id}>"
@@ -122,3 +129,44 @@ class UsageRecord(Base):
 
     def __repr__(self) -> str:
         return f"<UsageRecord user={self.user_id} at={self.created_at}>"
+class ReviewSignoff(Base):
+    """
+    A genetic counselor's sign-off on one interpreted variant.
+
+    This record is the accountable-attestation half of the product: the system
+    produces a machine classification, and a human signs off on it. It was a
+    local JSON file before (data/review_signoffs.json, gitignored) which meant
+    it had no ownership, no audit trail and no backup.
+
+    Design notes:
+    * One sign-off per variant (unique variant_id) — this matches the existing
+      "pending / reviewed" UI state. Re-signing updates the row in place rather
+      than appending, so the current state is always a single row.
+    * reviewer_name is the human who signs (may not be the account holder, e.g.
+      a counselor signing off on behalf of a clinician), while reviewed_by is
+      the authenticated account that recorded it.
+    * ondelete="SET NULL": if the account is deleted the sign-off survives with
+      its reviewer name and date intact. Deleting an account must not be able
+      to erase a clinical attestation.
+    """
+
+    __tablename__ = "review_signoffs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant_id: Mapped[str] = mapped_column(
+        String(128), unique=True, nullable=False, index=True
+    )
+    reviewer_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    review_date: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    signature: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+    reviewed_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    reviewer: Mapped[Optional["User"]] = relationship(back_populates="review_signoffs")
+
+    def __repr__(self) -> str:
+        return f"<ReviewSignoff {self.variant_id} by {self.reviewer_name}>"

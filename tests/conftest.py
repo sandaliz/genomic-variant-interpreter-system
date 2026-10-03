@@ -12,7 +12,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -85,6 +85,20 @@ def make_user(session, username="clinician", plan=None, role="clinician",
     session.commit()
     session.refresh(user)
     return user
+
+
+def plan_named(session, name, **kwargs):
+    """
+    Fetch a plan by name, creating it only if absent.
+
+    Several tests (and their fixtures) legitimately need the same plan -- e.g.
+    two administrators both on Enterprise -- and plans.name is UNIQUE, so
+    creating a second one would fail the test for the wrong reason.
+    """
+    existing = session.scalars(select(Plan).where(Plan.name == name)).one_or_none()
+    if existing is not None:
+        return existing
+    return make_plan(session, name=name, **kwargs)
 
 
 @pytest.fixture

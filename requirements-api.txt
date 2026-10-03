@@ -1,0 +1,33 @@
+# Runtime dependencies for the API container.
+#
+# requirements.txt additionally carries the analysis/notebook stack (jupyter,
+# matplotlib, seaborn) which the container never imports. Splitting the two keeps
+# the image small and the production dependency set obvious at a glance.
+#
+#   docker build ...
+#   pip install -r requirements-api.txt
+
+# --- web ---
+fastapi==0.128.2
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+python-dotenv==1.2.2
+
+# --- persistence ---
+SQLAlchemy==2.1.2
+psycopg[binary]==3.3.6
+alembic==1.20.0
+
+# --- accounts ---
+PyJWT==2.15.1
+pwdlib[argon2]==0.3.1
+email-validator==2.3.0
+
+# --- agents / reports ---
+pandas==2.2.3
+numpy==2.3.5
+openpyxl==3.1.5
+scikit-learn==1.8.0
+reportlab==4.4.9
+cryptography==46.0.4
+google-genai==2.18.1
