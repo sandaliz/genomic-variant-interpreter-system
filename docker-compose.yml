@@ -1,0 +1,32 @@
+# Local PostgreSQL for VariantLens (development only).
+#
+# The host port is 5433 rather than 5432 because 5432 is commonly already
+# taken by a locally installed PostgreSQL server (Homebrew, Postgres.app, ...).
+#
+#   docker compose up -d       start
+#   docker compose ps          health
+#   docker compose down        stop (keeps the volume)
+#   docker compose down -v     stop and DELETE all data
+#
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: variantlens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: variantlens
+      POSTGRES_USER: variantlens
+      POSTGRES_PASSWORD: development_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - variantlens_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U variantlens -d variantlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  variantlens_pgdata:

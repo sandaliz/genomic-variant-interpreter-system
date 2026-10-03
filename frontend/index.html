@@ -80,6 +80,28 @@
   .rail-note{font-size:12.5px;line-height:1.65;color:var(--ink-soft);}
   .rail-note strong{color:var(--ink-soft);font-weight:700;}
 
+  /* ---- Session / account ---- */
+  .session{border:1px solid var(--line);border-radius:3px;background:#fff;padding:12px;
+    margin-bottom:20px;}
+  .session-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .session-user{font-size:13px;font-weight:700;}
+  .session-mail{font-size:11.5px;color:var(--ink-faint);word-break:break-all;}
+  .plan-badge{display:inline-block;background:var(--accent);color:var(--accent-ink);
+    border-radius:2px;padding:2px 7px;font-size:10.5px;font-weight:800;
+    text-transform:uppercase;letter-spacing:.05em;}
+  .quota{margin-top:10px;font-size:11.5px;color:var(--ink-soft);}
+  .quota-bar{height:4px;background:var(--line);border-radius:2px;margin-top:5px;overflow:hidden;}
+  .quota-fill{height:100%;background:var(--accent);width:0;}
+  .quota-fill.warn{background:var(--vus);}
+  .auth-form{margin-top:12px;}
+  .auth-form.hidden, .session-card.hidden{display:none;}
+  .auth-form input{width:100%;border:1px solid var(--line-strong);border-radius:3px;
+    padding:8px 10px;font-size:13px;margin-bottom:7px;background:#fff;color:var(--ink);}
+  .auth-switch{font-size:12px;color:var(--ink-soft);margin-top:9px;}
+  .auth-switch a{color:var(--accent);cursor:pointer;font-weight:700;}
+  .auth-error{font-size:12px;color:var(--pathogenic);margin-top:8px;}
+  .auth-hint{font-size:11.5px;color:var(--ink-faint);line-height:1.5;margin-top:9px;}
+
   /* ---- Main stage ---- */
   .stage{padding:0;}
   .banner{
@@ -240,6 +262,47 @@
   <aside class="rail">
     <div class="brand"><span class="brand-mark"></span><h1>VariantLens</h1></div>
     <div class="brand-sub">BRCA1 / BRCA2 decision support</div>
+
+    <!-- Account session: the bearer token is the only credential the API needs. -->
+    <div class="session">
+      <div class="session-card hidden" id="sessionCard">
+        <div class="session-row">
+          <div>
+            <div class="session-user" id="sessionUser">—</div>
+            <div class="session-mail" id="sessionMail"></div>
+          </div>
+          <span class="plan-badge" id="sessionPlan">—</span>
+        </div>
+        <div class="quota">
+          <div id="sessionQuota">—</div>
+          <div class="quota-bar"><div class="quota-fill" id="quotaFill"></div></div>
+        </div>
+        <button class="btn-ghost" style="margin-top:11px;width:100%;" onclick="logout()">Sign out</button>
+      </div>
+
+      <form class="auth-form hidden" id="loginForm" onsubmit="return doLogin(event)">
+        <label class="field-label" for="loginUsername">Sign in</label>
+        <input id="loginUsername" placeholder="Username" autocomplete="username" required>
+        <input id="loginPassword" type="password" placeholder="Password"
+               autocomplete="current-password" required>
+        <button class="btn-ghost" style="width:100%;" type="submit" id="loginBtn">Sign in</button>
+        <div class="auth-switch">No account? <a onclick="showAuth('register')">Register</a></div>
+        <div class="auth-error" id="loginError"></div>
+      </form>
+
+      <form class="auth-form hidden" id="registerForm" onsubmit="return doRegister(event)">
+        <label class="field-label" for="regUsername">Create account</label>
+        <input id="regUsername" placeholder="Username (letters, digits, . _ -)"
+               autocomplete="username" required>
+        <input id="regEmail" type="email" placeholder="Work email" autocomplete="email" required>
+        <input id="regPassword" type="password" placeholder="Password (min 8 characters)"
+               autocomplete="new-password" required>
+        <button class="btn-ghost" style="width:100%;" type="submit" id="registerBtn">Register</button>
+        <div class="auth-switch">Already registered? <a onclick="showAuth('login')">Sign in</a></div>
+        <div class="auth-hint">New accounts start on the Free plan: rule-based reasoning only.</div>
+        <div class="auth-error" id="registerError"></div>
+      </form>
+    </div>
 
     <label class="field-label" for="query">Query</label>
     <textarea id="query" placeholder="e.g. Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?"></textarea>
@@ -402,6 +465,165 @@ EXAMPLES.forEach(q => {
 
 let latestResult = null;
 
+// ---- Session (JWT bearer auth) -------------------------------------
+// The token is held in localStorage and sent as Authorization: Bearer.
+// It is a short-lived access token, not a credential store: the server
+// re-reads the account from PostgreSQL on every request, so signing out
+// or deactivating an account takes effect immediately.
+const TOKEN_KEY = 'variantlens_token';
+
+function getToken(){ return localStorage.getItem(TOKEN_KEY); }
+function setToken(token){
+  if (token) { localStorage.setItem(TOKEN_KEY, token); }
+  else { localStorage.removeItem(TOKEN_KEY); }
+}
+
+function authHeaders(extra){
+  return Object.assign({}, extra || {}, (getToken() ? {'Authorization': 'Bearer ' + getToken()} : {}));
+}
+
+async function authFetch(path, options){
+  const opts = Object.assign({}, options || {}, { headers: authHeaders((options || {}).headers) });
+  const res = await fetch(path, opts);
+  if (res.status === 401 && getToken()){
+    // Expired, revoked or deactivated session: drop it and ask again.
+    setToken(null);
+    renderSession(null);
+  }
+  return res;
+}
+
+function showAuth(mode){
+  document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login');
+  document.getElementById('registerForm').classList.toggle('hidden', mode !== 'register');
+}
+
+function renderSession(me){
+  const card = document.getElementById('sessionCard');
+  if (!me){
+    card.classList.add('hidden');
+    showAuth('login');
+    document.getElementById('submitBtn').disabled = true;
+    return;
+  }
+  card.classList.remove('hidden');
+  showAuth(null);
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('sessionUser').textContent = me.user.username;
+  document.getElementById('sessionMail').textContent = me.user.email;
+  document.getElementById('sessionPlan').textContent = me.plan.name;
+
+  const used = me.usage.used_this_month;
+  const limit = me.usage.monthly_limit;
+  document.getElementById('sessionQuota').textContent =
+    (limit === null || limit === undefined)
+      ? used + ' queries this month · unlimited'
+      : used + ' / ' + limit + ' queries used this month';
+  const fill = document.getElementById('quotaFill');
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+  fill.style.width = pct + '%';
+  // Warn at the last 20% so a clinician sees the ceiling before hitting it.
+  fill.className = 'quota-fill' + (limit && pct >= 80 ? ' warn' : '');
+}
+
+async function refreshSession(){
+  if (!getToken()){ renderSession(null); return; }
+  try {
+    const res = await fetch('/api/auth/me', { headers: authHeaders() });
+    if (!res.ok){ setToken(null); renderSession(null); return; }
+    renderSession(await res.json());
+  } catch (err){
+    setToken(null);
+    renderSession(null);
+  }
+}
+
+function describeAuthError(data, fallback){
+  if (!data) return fallback;
+  if (typeof data.detail === 'string') return data.detail;
+  // FastAPI validation errors arrive as a list of field problems.
+  if (Array.isArray(data.detail) && data.detail.length){
+    return data.detail.map(d => (d.loc || []).slice(1).join('.') + ': ' + d.msg).join(' ');
+  }
+  return fallback;
+}
+
+async function doLogin(event){
+  event.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginError');
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('loginUsername').value.trim(),
+        password: document.getElementById('loginPassword').value
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(describeAuthError(data, 'Sign in failed.'));
+    setToken(data.access_token);
+    document.getElementById('loginPassword').value = '';
+    await refreshSession();
+  } catch (e){
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
+}
+
+async function doRegister(event){
+  event.preventDefault();
+  const btn = document.getElementById('registerBtn');
+  const err = document.getElementById('registerError');
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('regUsername').value.trim(),
+        email: document.getElementById('regEmail').value.trim(),
+        password: document.getElementById('regPassword').value
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(describeAuthError(data, 'Registration failed.'));
+    // Register returns the account but no token, so sign in immediately.
+    const login = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('regUsername').value.trim(),
+        password: document.getElementById('regPassword').value
+      })
+    });
+    const session = await login.json().catch(() => ({}));
+    if (!login.ok) throw new Error(describeAuthError(session, 'Registration failed.'));
+    setToken(session.access_token);
+    document.getElementById('regPassword').value = '';
+    await refreshSession();
+  } catch (e){
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
+}
+
+function logout(){
+  setToken(null);
+  renderSession(null);
+  latestResult = null;
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('empty').style.display = 'block';
+}
+
 function escapeHtml(s){
   if (s === null || s === undefined) return '—';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -511,6 +733,11 @@ function copyReport(){
 async function classifyVariant(){
   const query = document.getElementById('query').value.trim();
   if (!query){ return; }
+  if (!getToken()){
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = 'Sign in to run a variant analysis.';
+    return;
+  }
 
   document.getElementById('empty').style.display = 'none';
   document.getElementById('results').style.display = 'none';
@@ -524,21 +751,25 @@ async function classifyVariant(){
   const timer = setInterval(() => { mi = (mi+1) % msgs.length; msgEl.textContent = msgs[mi]; }, 900);
 
   try {
-    // The demo key is sent explicitly (rather than injected server-side) so the
-    // authentication step is genuinely enforced and visible end-to-end.
-    const DEMO_API_KEY = 'demo-clinician-key';
-    const body = { query, api_key: DEMO_API_KEY };
-
-    const response = await fetch('/api/classify', {
+    // JWT bearer auth: the token identifies the account whose plan and quota
+    // gate this run. The agent layer still applies its own API-key check.
+    const response = await authFetch('/api/classify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': DEMO_API_KEY },
-      body: JSON.stringify(body)
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ query })
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || data.error || 'Analysis failed.');
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 429){
+      throw new Error(data.detail || 'Monthly quota exhausted. Upgrade the plan to continue.');
+    }
+    if (!response.ok){
+      throw new Error(data.detail || data.error || 'Analysis failed.');
+    }
 
     latestResult = data;
     renderResult(data);
+    // Refresh the quota bar from the entitlement block on the response.
+    refreshSession();
   } catch (err) {
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = err.message || 'Something went wrong.';
@@ -757,6 +988,10 @@ function renderResult(data){
     fairnessEl.style.display = 'none';
   }
 }
+
+// Restore an existing session on load (if the stored token is still valid) and
+// otherwise fall back to the sign-in form with the submit button disabled.
+refreshSession();
 </script>
 </body>
 </html>

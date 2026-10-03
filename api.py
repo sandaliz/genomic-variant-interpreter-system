@@ -15,6 +15,7 @@ Run:
 import os
 import sys
 import json
+import uuid
 from datetime import date, datetime
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -34,8 +35,21 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from main import VariantInterpretationSystem
 from protocol.security import authenticate, AuthenticationError
+from auth.dependencies import get_current_user, require_admin
+from auth.routes import router as auth_router
+from db.database import get_db
+from db.models import Plan, User
+from services.entitlement_service import (
+    check_quota,
+    entitlements,
+    record_usage,
+    usage_this_month,
+)
 
 
 # ------------------------------------------------------------------
@@ -46,6 +60,9 @@ app = FastAPI(
     description="Multi-agent AI system for BRCA1/BRCA2 variant classification",
     version="1.0.0",
 )
+
+# Account endpoints (/api/auth/*): register, login, me.
+app.include_router(auth_router)
 
 # CORS for the web frontend.
 # Restricted to the local demo origins by default. Set FRONTEND_ORIGINS
@@ -65,8 +82,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared system instance (agents are stateless, so this is safe)
-_system = VariantInterpretationSystem(use_llm=True)
+# Shared system instances (agents are stateless, so this is safe). Two
+# variants are pre-built so a per-plan feature gate (LLM on/off) never needs
+# to mutate a shared instance at request time.
+_system_llm = VariantInterpretationSystem(use_llm=True)
+_system_rules = VariantInterpretationSystem(use_llm=False)
+_system = _system_llm  # legacy default: behaves exactly as before
+
+
+def _history_for(variant_id: str) -> list:
+    """
+    Audit-trail lookup across both system variants.
+
+    Each VariantInterpretationSystem owns its own MessageLog, so a query run
+    under a rules-only plan lands in a different log than an LLM-plan query.
+    Searching both keeps /api/trail and /api/pipeline complete regardless of
+    which plan handled the original request.
+    """
+    seen = {}
+    for system in (_system_llm, _system_rules):
+        for message in system.log.history_for(variant_id):
+            seen[message.message_id] = message
+    return sorted(seen.values(), key=lambda m: str(m.timestamp))
 
 # Demo API key. The frontend sends this explicitly so the authentication step is
 # visible end-to-end; it is NOT injected server-side as a silent fallback.
@@ -97,13 +134,28 @@ _REVIEW_SIGNOFFS = _load_review_signoffs()
 # ------------------------------------------------------------------
 # Request/Response models
 # ------------------------------------------------------------------
+class UsageInfo(BaseModel):
+    used_this_month: int
+    monthly_limit: Optional[int] = None
+    remaining: Optional[int] = None
+
+
+class EntitlementInfo(BaseModel):
+    llm_enabled: bool
+    api_access: bool
+    audit_export: bool
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., description="Free-text query, e.g. 'Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?'")
+    # Accepted for backwards compatibility with the pre-JWT API, but ignored:
+    # authentication is the Authorization: Bearer token, and the agent layer
+    # uses its own credential internally.
     api_key: Optional[str] = Field(
         None,
         description=(
-            "Optional API key. Preferred transport is the X-API-Key header. "
-            "Required either way - requests without a valid key are rejected with 401."
+            "Deprecated and ignored. Authentication is the JWT sent in the "
+            "Authorization: Bearer header."
         ),
     )
 
@@ -140,6 +192,9 @@ class FullPipelineResponse(BaseModel):
     review_required: bool = False
     coverage_fallback: bool = False
     evidence_limitation: Optional[str] = None
+    plan: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    entitlements: Optional[EntitlementInfo] = None
 
 
 class PDFReportRequest(BaseModel):
@@ -198,12 +253,25 @@ class QueryResponse(BaseModel):
     review_required: bool = False
     coverage_fallback: bool = False
     evidence_limitation: Optional[str] = None
+    # Entitlement context, so the UI can show the plan and the remaining quota
+    # without a second round-trip to /api/auth/me.
+    plan: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    entitlements: Optional[EntitlementInfo] = None
 
 
 # ------------------------------------------------------------------
-# API key dependency
+# Legacy agent-layer API key dependency
 # ------------------------------------------------------------------
 def verify_api_key(x_api_key: str = Header(None)):
+    """
+    Verify an agent-layer API key (X-API-Key header).
+
+    No route uses this any more -- every endpoint authenticates with a JWT
+    account token instead. It is kept because it is the exact check the
+    pipeline still performs internally (main.py -> authenticate()), so it is
+    the reference implementation of that boundary and stays testable.
+    """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
     try:
@@ -233,14 +301,18 @@ async def health():
 
 
 @app.post("/api/classify", response_model=QueryResponse)
-async def classify(request: QueryRequest, x_api_key: str = Header(None)):
+def classify(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Classify a genetic variant through the full 4-agent pipeline.
 
-    Requires an API key, supplied either as an ``X-API-Key`` header (preferred,
-    and what the web frontend sends) or as the ``api_key`` body field. There is
-    no server-side fallback key: an unauthenticated request is rejected with 401
-    so the authentication step is genuinely enforced.
+    Requires a JWT account token (``Authorization: Bearer <token>``); an
+    unauthenticated request is rejected with 401. The account's plan decides
+    whether LLM-assisted reasoning is used, and its monthly quota is checked
+    before any agent work starts.
 
     Example:
     {
@@ -249,25 +321,35 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
 
     Returns the full pipeline result including extracted entities,
     top-K evidence with relevance scores, classification, confidence,
-    audit trail, and the final report.
+    audit trail, the final report, and the caller's plan/usage/entitlements.
     """
-    # --- Security: authenticate BEFORE any agent runs ---
-    api_key = x_api_key or request.api_key
-    if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "Missing API key. Send an X-API-Key header "
-                f"(demo key: {DEMO_API_KEY})."
-            ),
-        )
+    # --- Security + entitlements: authenticated user, plan gate, quota ---
+    info = check_quota(db, current_user)
+    llm_allowed = bool(info["llm_enabled"])
+    system = _system_llm if llm_allowed else _system_rules
+    # Deterministic per-user request key: a retry of the same query by the same
+    # user maps to the same id, so usage is recorded once instead of twice.
+    request_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL, f"{current_user.id}:{request.query.strip()}"
+    ))
 
-    result = _system.run(request.query, api_key)
+    # The agent layer keeps its own credential check as defence-in-depth: JWT ran
+    # at the edge above, and main.py still refuses untrusted callers.
+    result = system.run(request.query, DEMO_API_KEY, user_id=str(current_user.id))
 
     if "error" in result:
-        # Distinguish authentication failures (401) from bad queries (400)
-        status = 401 if str(result["error"]).startswith("Access denied") else 400
-        raise HTTPException(status_code=status, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    # Record the accepted call. record_usage() re-verifies the quota inside the
+    # same transaction that writes the row, so concurrent requests cannot both
+    # pass the pre-check and overshoot the plan limit.
+    record_usage(
+        db,
+        current_user.id,
+        request_id,
+        current_user.plan.monthly_query_limit,
+    )
+    ent = entitlements(current_user, usage_this_month(db, current_user.id))
 
     return QueryResponse(
         variant_id=result["variant_id"],
@@ -298,6 +380,17 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
         review_required=result.get("review_required", False),
         coverage_fallback=result.get("coverage_fallback", False),
         evidence_limitation=result.get("evidence_limitation"),
+        plan=current_user.plan.name,
+        usage=UsageInfo(
+            used_this_month=ent["used_this_month"],
+            monthly_limit=ent["monthly_limit"],
+            remaining=ent["remaining"],
+        ),
+        entitlements=EntitlementInfo(
+            llm_enabled=ent["llm_enabled"],
+            api_access=ent["api_access"],
+            audit_export=ent["audit_export"],
+        ),
     )
 
 
@@ -473,12 +566,12 @@ async def create_pdf_report(request: PDFReportRequest):
 
 
 @app.get("/api/pipeline/{variant_id}")
-async def get_pipeline(variant_id: str, user: str = Depends(verify_api_key)):
+def get_pipeline(variant_id: str, current_user: User = Depends(get_current_user)):
     """
     Get the full pipeline result and audit trail for a previously queried variant.
-    Requires X-API-Key header.
+    Requires a valid JWT (Authorization: Bearer).
     """
-    messages = _system.log.history_for(variant_id)
+    messages = _history_for(variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No pipeline data found for {variant_id}")
 
@@ -501,9 +594,9 @@ async def get_pipeline(variant_id: str, user: str = Depends(verify_api_key)):
 
 
 @app.get("/api/trail/{variant_id}")
-async def get_trail(variant_id: str, user: str = Depends(verify_api_key)):
+def get_trail(variant_id: str, current_user: User = Depends(get_current_user)):
     """Get the full agent-to-agent message audit trail for a variant."""
-    messages = _system.log.history_for(variant_id)
+    messages = _history_for(variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No trail found for {variant_id}")
     return [
@@ -521,6 +614,40 @@ async def get_trail(variant_id: str, user: str = Depends(verify_api_key)):
         }
         for m in messages
     ]
+
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Read-only account listing for administrators.
+
+    Deliberately read-only in this scope: no create/update/delete, so a
+    compromised admin token cannot escalate or destroy accounts. Password
+    hashes are never returned.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    users = db.scalars(select(User).order_by(User.id).limit(limit)).all()
+    return {
+        "total": len(users),
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active,
+                "plan": u.plan.name,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "used_this_month": usage_this_month(db, u.id),
+            }
+            for u in users
+        ],
+    }
 
 
 if __name__ == "__main__":

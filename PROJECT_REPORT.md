@@ -54,6 +54,10 @@ Our dataset (3,009 ClinVar variants) includes a `Conflicting_Classification_Flag
 User query (natural language)
    |
    v
+[Account Authentication + Entitlement Check]  auth/, services/entitlement_service.py
+   JWT verify -> re-read account from PostgreSQL -> plan gate -> monthly quota
+   |
+   v
 [Authentication Check - Security]  protocol/security.py
    |
    v
@@ -322,7 +326,11 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 
 | Feature | Where | How |
 |---|---|---|
-| **Authentication** | `protocol/security.py` | API key hashed with SHA-256; a valid key is required by `POST /api/classify` (401 otherwise) and by the audit-trail endpoints |
+| **Agent-layer authentication** | `protocol/security.py` | API key hashed with SHA-256; `main.py` refuses an untrusted caller before any agent runs (retained as defence-in-depth behind the JWT layer) |
+| **Account authentication** | `auth/security.py`, `auth/dependencies.py` | Argon2id password hashing; HS256 access tokens (60 min). `POST /api/classify`, `/api/trail/*` and `/api/pipeline/*` require `Authorization: Bearer <token>` and return 401 without one. Identity is re-read from PostgreSQL on every request, so deactivation revokes access immediately and the authorization role always comes from the database |
+| **Role-based access** | `auth/dependencies.py` | `require_admin()` guards the read-only `GET /api/admin/users`; a clinician gets 403 |
+| **Plan feature gating** | `services/entitlement_service.py`, `api.py` | `plan.llm_enabled` selects the LLM or rules-only system instance at request time; Free runs the full four-agent pipeline with rule-based reasoning |
+| **Quota enforcement** | `services/entitlement_service.py` | Per-UTC-month usage rows. Pre-flight `check_quota()` returns 429 before the pipeline runs; `record_usage()` re-checks under a PostgreSQL `SELECT … FOR UPDATE` row lock so concurrent requests cannot overshoot. Deterministic `request_id` keeps client retries from being charged twice |
 | **Input sanitization** | Intake Agent | Rejects SQL/script injection, over-length input, empty queries |
 | **Prompt-injection defense** | `protocol/security.py` (`is_prompt_injection`) | Regex blocklist for system-prompt overrides ("ignore previous instructions"), exfiltration ("reveal system prompt"), role-hijack and jailbreak phrasing; enforced in `sanitize_query()` before any NLP/LLM sees the query |
 | **Encryption in transit** | `protocol/message.py` | All agent payloads encrypted with Fernet symmetric encryption |
@@ -521,11 +529,21 @@ and assignments.
 
 ### Pricing Model
 
+These tiers are **implemented**, not aspirational: they exist as rows in the
+`plans` table (`scripts/seed_plans.py` is the source of truth) and are enforced
+before every pipeline run. See [AUTH.md](AUTH.md).
+
 | Plan | Price | Features |
 |---|---|---|
 | **Free / Research** | $0 | 10 queries/month, rule-based mode, basic evidence |
 | **Professional** | $99/month | 500 queries/month, Gemini LLM mode, API access, audit trail export |
-| **Enterprise** | Custom | Unlimited queries, on-premise deployment, LIMS integration, SLA, dedicated support |
+| **Enterprise** | Custom | Unlimited queries (`monthly_query_limit = NULL`), on-premise deployment, LIMS integration, SLA, dedicated support |
+
+Each account is identified by a JWT, and the pipeline is gated per plan: the Free
+tier runs the **full four-agent pipeline** with rule-based reasoning rather than a
+reduced workflow. Monthly quotas are counted per UTC calendar month from immutable
+usage rows, with a `429` returned before any agent work starts once the limit is
+reached.
 
 ### Deployment Ideas
 
@@ -557,16 +575,35 @@ variant_agent_system/
 ├── protocol/
 │   ├── message.py               # Agent communication protocol + NumpyJSONEncoder
 │   └── security.py              # Auth, sanitization, encryption (Fernet)
+├── auth/                        # JWT account layer in front of the agents
+│   ├── dependencies.py          # get_current_user(), require_admin()
+│   ├── routes.py                # /api/auth/register, /login, /me
+│   ├── schemas.py               # Pydantic auth contracts
+│   └── security.py              # Argon2id hashing + JWT mint/decode
+├── db/                          # Account/entitlement persistence
+│   ├── database.py              # Engine, SessionLocal, get_db()
+│   └── models.py                # Plan, User, UsageRecord
+├── services/
+│   └── entitlement_service.py   # Quota windows, feature gates, usage recording
+├── migrations/                  # Alembic migration for the three tables
 ├── tests/
 │   ├── test_intake_agent.py     # 13 tests
 │   ├── test_evidence_agent.py   # 11 tests
 │   ├── test_classification_agent.py  # 22 tests
 │   ├── test_llm_resilience.py   # 8 tests
-│   └── test_security.py         # 21 tests
+│   ├── test_security.py         # 21 tests
+│   ├── test_auth.py             # 27 tests — registration, login, JWT
+│   ├── test_entitlements.py     # 19 tests — quotas, month windows, row locking
+│   ├── test_classify_api.py     # 16 tests — 401/429, plan gate, usage recording
+│   ├── test_admin.py            # 10 tests — role-based access
+│   └── test_cache_isolation.py  # 6 tests — per-account result caching
 ├── analysis_results/            # Generated visualizations for presentations
 │   └── README.md               # Guide to using analysis visualizations
-├── .env.example                 # API key template
+├── .env.example                 # API key + DATABASE_URL + JWT_SECRET_KEY template
 ├── .gitignore
+├── alembic.ini                  # Alembic config
+├── AUTH.md                      # Auth, plan and quota design documentation
+├── docker-compose.yml           # Local PostgreSQL 16 (host port 5433)
 ├── LICENSE                      # MIT License
 ├── analysis.ipynb               # Data analysis & visualization notebook
 ├── api.py                       # FastAPI REST API
@@ -584,18 +621,26 @@ variant_agent_system/
 cd variant_agent_system
 pip install -r requirements.txt
 cp .env.example .env   # add GEMINI_API_KEY (optional — rule-based fallback works)
+                      # + a generated JWT_SECRET_KEY
 
-# CLI
+# Database (account layer)
+docker compose up -d            # PostgreSQL 16 on host port 5433
+alembic upgrade head
+python scripts/seed_plans.py    # Free / Professional / Enterprise
+python scripts/create_admin.py  # bootstrap admin (password printed once)
+
+# CLI (no account needed — talks to the agents directly)
 python3 main.py                               # default demo query
 python3 main.py --query "What variants are in BRCA1?"
 python3 main.py --no-llm                       # rule-based only (no Gemini API calls)
 
-# Web UI
+# Web UI (register an account, sign in)
 uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 75 tests
+python3 -m pytest tests/ -v    # 153 tests (no database required)
+python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
 # Evaluation
 python3 evaluation.py                              # full suite (100 variants)
@@ -617,8 +662,8 @@ This project fulfills all assignment requirements:
 3. ✅ **LLM**: Google Gemini (classification reasoning + report generation)
 4. ✅ **NLP**: Named Entity Recognition (gene, HGVS, position, rsID) + intent classification + extractive/abstractive summarization
 5. ✅ **Information Retrieval**: TF-IDF-based retrieval with cosine similarity (scikit-learn `TfidfVectorizer` + `cosine_similarity`) — filtering, relevance ranking, and ranked top-K evidence selection with explainable scores. (No BM25 implementation is used.)
-6. ✅ **Security**: authentication (SHA-256 hashed API keys), input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
+6. ✅ **Security**: two-layer authentication (PostgreSQL accounts with Argon2id + JWT at the API edge, SHA-256 agent-layer API keys as defence-in-depth), role-based access control, plan feature gating, monthly quota enforcement with row-locked commit-time re-checks, input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
-9. ✅ **Commercialization**: Pricing model (Free/Professional/Enterprise), target users, deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **75 passing unit tests**
+9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **153 passing unit tests** (75 agent/protocol + 78 auth/entitlement/role)

@@ -60,19 +60,30 @@ class VariantInterpretationSystem:
         self.report_agent = ReportAgent(use_llm=use_llm, fast_mode=fast_mode, batch_llm=batch_llm, enable_llm_cache=enable_llm_cache)
         self.use_cache = use_cache
 
-    def _generate_cache_key(self, raw_query: str, api_key: str) -> str:
-        """Generate a unique cache key for a query."""
-        query_string = f"{raw_query}:{api_key}"
+    def _generate_cache_key(self, raw_query: str, api_key: str, user_id: str = "") -> str:
+        """Generate a unique cache key for a query.
+
+        Bound to the identity (the JWT user id when known, else the legacy
+        API key) so cached results can never leak across users.
+        """
+        identity = user_id or api_key
+        query_string = f"{raw_query}:{identity}"
         return hashlib.md5(query_string.encode()).hexdigest()
 
     @lru_cache(maxsize=50)
-    def _run_cached(self, cache_key: str, raw_query: str, api_key: str) -> dict:
-        """Cached version of the run method for repeated queries."""
-        return self._run_uncached(raw_query, api_key)
+    def _run_cached(self, cache_key: str, raw_query: str, api_key: str, user_id: str = "") -> dict:
+        """Cached version of the run method for repeated queries.
 
-    def _run_uncached(self, raw_query: str, api_key: str) -> dict:
+        user_id is a plain string (the lru key requires hashable values) and is
+        part of both keys, so one account can never receive another account result.
+        """
+        return self._run_uncached(raw_query, api_key, user_id=user_id)
+
+    def _run_uncached(self, raw_query: str, api_key: str, user_id: str = "") -> dict:
         """Uncached version of the run method - actual implementation."""
-        # --- Security: authenticate the caller first ---
+        # --- Security: authenticate the caller first (agent-layer check). When
+        # the API is called behind JWT auth that check already ran; this one is
+        # kept as defence-in-depth, so the legacy security boundary is unchanged.
         try:
             user = authenticate(api_key)
         except AuthenticationError as e:
@@ -224,13 +235,15 @@ class VariantInterpretationSystem:
             },
         }
 
-    def run(self, raw_query: str, api_key: str = "demo-clinician-key") -> dict:
+    def run(self, raw_query: str, api_key: str = "demo-clinician-key", user_id: str = "") -> dict:
         """
         Run the full pipeline and return a dict with the report and summary.
 
         Args:
             raw_query: Free-text query about a genetic variant
             api_key: API key for authentication (defaults to demo key)
+            user_id: authenticated account id from JWT auth, empty for legacy calls.
+                Bound into the cache key so results never leak across users.
 
         Returns:
             dict with keys: report_text, evidence_summary, variant_id,
@@ -238,13 +251,13 @@ class VariantInterpretationSystem:
             audit_trail, top_k_results, ir_metadata, responsible_ai
         """
         if self.use_cache:
-            cache_key = self._generate_cache_key(raw_query, api_key)
-            result = self._run_cached(cache_key, raw_query, api_key)
+            cache_key = self._generate_cache_key(raw_query, api_key, user_id)
+            result = self._run_cached(cache_key, raw_query, api_key, user_id)
             if "from_cache" not in result:
                 result["from_cache"] = True
             return result
         else:
-            return self._run_uncached(raw_query, api_key)
+            return self._run_uncached(raw_query, api_key, user_id=user_id)
 
     def _build_audit_trail(self, trace_id: str) -> list:
         """

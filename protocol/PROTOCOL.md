@@ -74,7 +74,8 @@ asked, and *which run* asked it.
 |---|---|
 | **Confidentiality in transit** | Payload JSON is encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) by `MessageEncryptor` in `protocol/security.py` before leaving an agent |
 | **Integrity / tamper detection** | Fernet's HMAC — a modified token fails to decrypt (`InvalidToken`) |
-| **Authentication** | API key (SHA-256 hashed) verified by `authenticate()` **before** the Intake Agent runs |
+| **Authentication (account)** | JWT bearer token verified by `get_current_user()` (`auth/dependencies.py`) at the API edge, with the account re-read from PostgreSQL on every request; Argon2id password hashing in `auth/security.py` |
+| **Authentication (agent layer)** | API key (SHA-256 hashed) verified by `authenticate()` **before** the Intake Agent runs — retained as defence-in-depth behind the JWT layer |
 | **Input sanitisation** | `sanitize_query()` rejects SQL/script patterns, over-length input, and prompt-injection phrasing before any agent or LLM sees it |
 | **Auditability** | Every message is appended to `MessageLog` and retrievable by `variant_id` or `trace_id` |
 
@@ -189,25 +190,38 @@ Exposed over HTTP (authentication required):
 |---|---|---|---|
 | `GET` | `/` | Web UI | — |
 | `GET` | `/health`, `/healthz` | Health check | — |
-| `POST` | `/api/classify` | Run the 4-agent pipeline | API key |
+| `POST` | `/api/auth/register` | Create an account (Free, `clinician`) | — |
+| `POST` | `/api/auth/login` | Exchange credentials for a JWT | — |
+| `GET` | `/api/auth/me` | Account, plan, usage, entitlements | `Bearer` |
+| `POST` | `/api/classify` | Run the 4-agent pipeline (quota-metered) | `Bearer` |
 | `POST` | `/api/report/pdf` | Print-ready PDF of a report | — |
 | `POST` / `GET` | `/api/review/{variant_id}` | Save / fetch human review sign-off | — |
-| `GET` | `/api/pipeline/{variant_id}` | Full pipeline + audit detail | `X-API-Key` |
-| `GET` | `/api/trail/{variant_id}` | Agent-to-agent audit trail | `X-API-Key` |
+| `GET` | `/api/pipeline/{variant_id}` | Full pipeline + audit detail | `Bearer` |
+| `GET` | `/api/trail/{variant_id}` | Agent-to-agent audit trail | `Bearer` |
+| `GET` | `/api/admin/users` | Read-only account listing | `Bearer` + `admin` |
 
-Authentication is performed with the `X-API-Key` header (or the `api_key` body
-field for `/api/classify`):
+Account authentication uses a JWT bearer token. The account is re-read from
+PostgreSQL on every request, so deactivating or deleting it revokes access
+immediately:
 
 ```
 POST /api/classify
-X-API-Key: demo-clinician-key
+Authorization: Bearer <access_token>
 Content-Type: application/json
 
 { "query": "Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?" }
 ```
 
-Keys are registered as SHA-256 digests (`_REGISTERED_API_KEYS`), so a raw key is
-never stored in memory. Demo key: `demo-clinician-key` → user `clinician_demo_user`.
+The response also carries the caller's entitlement context (`plan`, `usage`,
+`entitlements`), and returns **429** once the plan's monthly quota is exhausted —
+checked *before* any agent runs. The plan's `llm_enabled` flag selects the
+LLM-assisted or rules-only system instance. See [AUTH.md](../AUTH.md).
+
+Behind the JWT layer, `main.py` still authenticates the agent-layer API key
+(SHA-256 digests in `_REGISTERED_API_KEYS`, so a raw key is never stored in
+memory; demo key `demo-clinician-key` → user `clinician_demo_user`). Neither
+layer replaces the other: JWT decides *who is calling and what they may use*, the
+API key keeps the pipeline itself refusing untrusted callers.
 
 ---
 
@@ -216,9 +230,10 @@ never stored in memory. Demo key: `demo-clinician-key` → user `clinician_demo_
 - Agents run **in the same process** for this prototype; the protocol is
   transport-agnostic, so moving each agent behind its own HTTP/MCP endpoint would
   not change any message schema.
-- The demo API key is a **prototype credential**, not a production identity
-  provider; a production deployment would use OAuth 2.0 / OIDC with per-user
-  scopes.
+- The demo API key is a **prototype credential** for the agent layer, not a
+  production identity provider. External clients authenticate with a JWT account
+  token; a production deployment would federate that to OAuth 2.0 / OIDC with
+  per-user scopes.
 - Fernet uses a per-process key for the demo, so messages are not decryptable
   across restarts — intentional for the academic prototype, documented in
   `COMPLIANCE_REGULATORY_POSITIONING.md`.

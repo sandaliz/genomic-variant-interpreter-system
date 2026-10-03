@@ -133,6 +133,25 @@ Locked in by `TestServiceUnavailableCascade` in
 `tests/test_llm_resilience.py` — a hermetic end-to-end 503 cascade test with
 no network calls.
 
+### Accounts, Plans & Quotas
+
+`/api/classify`, `/api/trail/*` and `/api/pipeline/*` require a JWT bearer
+token. Accounts, subscription plans and monthly usage live in PostgreSQL and are
+enforced **before** any agent runs:
+
+- **Argon2id** password hashing, HS256 access tokens (60 min default).
+- Identity is **re-read from the database on every request**, so deactivating an
+  account revokes access immediately even with an unexpired token.
+- **Plans** (Free / Professional / Enterprise) gate the LLM path: Free runs the
+  full four-agent pipeline with rule-based reasoning instead.
+- **Quotas** are counted per UTC month from usage rows. A pre-flight check returns
+  `429` before the pipeline starts, and the commit-time re-check takes a
+  PostgreSQL row lock so concurrent requests cannot overshoot the limit.
+
+The agent layer keeps its own API-key check as defence-in-depth, and results are
+cached per identity so one account can never be served another's cached verdict.
+See **[AUTH.md](AUTH.md)** for the full design and endpoint list.
+
 ## Supported Query Types
 
 You don't need special syntax — just ask in plain English:
@@ -156,16 +175,28 @@ If no API key is configured, the system gracefully falls back to deterministic r
 
 ### Prerequisites
 - Python 3.10+
+- Docker (for the local PostgreSQL account database)
 - Gemini API key (optional for demos — rule-based fallback works without it)
 
 ### 1. Install & configure
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env   # add GEMINI_API_KEY
+cp .env.example .env   # add GEMINI_API_KEY + a generated JWT_SECRET_KEY
 ```
 
-### 2. Run the CLI
+### 2. Start the database and initialise it
+
+```bash
+docker compose up -d            # PostgreSQL 16 on host port 5433
+alembic upgrade head            # plans, users, usage_records
+python scripts/seed_plans.py    # Free / Professional / Enterprise
+python scripts/create_admin.py  # bootstrap admin (password printed once)
+```
+
+### 3. Run the CLI
+
+The CLI talks to the agents directly and needs no account:
 
 ```bash
 python3 main.py                                    # default demo query
@@ -173,27 +204,28 @@ python3 main.py --query "What variants are in BRCA1?"
 python3 main.py --no-llm                            # rule-based only
 ```
 
-### 3. Run the Web UI
+### 4. Run the Web UI
 
 ```bash
 uvicorn api:app --reload --port 8000
-# open http://localhost:8000
+# open http://localhost:8000, register an account, sign in
 ```
 
-### 4. Run tests
+### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 75 tests
+python3 -m pytest tests/ -v    # 153 tests (no database required)
+python3 scripts/smoke_auth.py  # end-to-end check against real PostgreSQL
 ```
 
-### 5. Run evaluation
+### 6. Run evaluation
 
 ```bash
 python3 evaluation.py                    # full suite
 python3 evaluation.py --sample-size 50 --no-llm  # quick
 ```
 
-### 6. Run analysis notebook (for visualizations)
+### 7. Run analysis notebook (for visualizations)
 
 ```bash
 jupyter notebook analysis.ipynb
@@ -274,9 +306,20 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
 ## Security Features
 
 - **Input sanitization** (`protocol/security.py`) blocks malformed/malicious queries
-- **API key authentication** before any agent runs — `POST /api/classify` **requires** a valid key
-  (sent as an `X-API-Key` header, or the `api_key` body field) and returns **401** without one.
-  There is no silent server-side fallback key; the web UI sends the demo key explicitly.
+- **JWT account authentication** — `POST /api/classify`, `/api/trail/*` and
+  `/api/pipeline/*` **require** `Authorization: Bearer <token>` and return **401**
+  without one. Accounts, passwords (Argon2id) and plans live in PostgreSQL; see
+  [AUTH.md](AUTH.md).
+- **Identity re-checked per request** — deactivating or deleting an account
+  revokes access immediately, and the `role` used for authorization always comes
+  from the database, never from the token
+- **Plan feature gating** — the Free plan runs the full pipeline with rule-based
+  reasoning; LLM-assisted reasoning requires Professional or Enterprise
+- **Monthly quota enforcement** — pre-flight `429` before the pipeline runs, plus a
+  commit-time re-check under a PostgreSQL row lock so concurrent requests cannot
+  overshoot the limit
+- **Defence in depth** — the agent layer keeps its own API-key check, so a call that
+  bypasses FastAPI is still refused; cached results are keyed per identity
 - **Prompt-injection defense** — a regex blocklist rejects system-prompt overrides,
   exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
 - **Symmetric encryption** — all agent messages encrypted in transit using Fernet
@@ -351,20 +394,42 @@ variant_agent_system/
 │   ├── message.py               # Agent communication protocol + encryption
 │   ├── security.py              # Auth, sanitization, encryption
 │   └── PROTOCOL.md              # Full protocol spec: envelope, flows, audit trail
+├── auth/                        # JWT account layer (sits in front of the agents)
+│   ├── dependencies.py          # get_current_user(), require_admin()
+│   ├── routes.py                # /api/auth/register, /login, /me
+│   ├── schemas.py               # Pydantic auth contracts
+│   └── security.py              # Argon2id hashing + JWT mint/decode
+├── db/                          # Account/entitlement persistence (agents never import it)
+│   ├── database.py              # Engine, SessionLocal, get_db()
+│   └── models.py                # Plan, User, UsageRecord
+├── services/
+│   └── entitlement_service.py   # Quota windows, feature gates, usage recording
+├── migrations/                  # Alembic migration for the three tables
+├── docker-compose.yml           # Local PostgreSQL 16 (host port 5433)
 ├── scripts/
 │   ├── enrich_clinvar_labels.py          # Join ClinVar labels onto the dataset
-│   └── build_variant_summary_index.py    # Build the BRCA rsID/coverage index
+│   ├── build_variant_summary_index.py    # Build the BRCA rsID/coverage index
+│   ├── seed_plans.py                     # Free / Professional / Enterprise plans
+│   ├── create_admin.py                   # Bootstrap admin account
+│   └── smoke_auth.py                     # End-to-end auth check against PostgreSQL
 ├── tests/
 │   ├── test_intake_agent.py
 │   ├── test_evidence_agent.py
 │   ├── test_classification_agent.py
 │   ├── test_llm_resilience.py
-│   └── test_security.py
+│   ├── test_security.py
+│   ├── test_auth.py
+│   ├── test_entitlements.py
+│   ├── test_classify_api.py
+│   ├── test_admin.py
+│   └── test_cache_isolation.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored
+├── AUTH.md                      # Auth, plan and quota design documentation
 ├── LICENSE                      # MIT License
 ├── analysis.ipynb               # Production evaluation & visualization notebook
 ├── analysis_results/            # Generated visualizations for presentations
+├── alembic.ini                  # Alembic config
 ├── api.py                       # FastAPI REST API
 ├── COMPLIANCE_REGULATORY_POSITIONING.md
 ├── evaluation.py                # Evaluation metrics (real-label + proxy modes)

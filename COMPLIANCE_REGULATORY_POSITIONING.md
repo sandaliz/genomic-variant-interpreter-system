@@ -14,7 +14,7 @@ It is **not represented as a clinically validated, regulated medical device or p
 | Data | Public ClinVar-derived variant records | Validated data governance, provenance and update controls |
 | Clinical validity | Simplified ACMG-style project rules | Expert-reviewed ACMG/AMP/ClinGen methodology and validation |
 | AI/LLM | Optional Gemini-assisted reasoning and report generation | Model validation, version control, monitoring, change control and safety testing |
-| Security | API key, input validation, encrypted agent messages, audit trail | Managed identity, secrets management, TLS, least privilege, threat modelling and penetration testing |
+| Security | Account authentication (Argon2id + JWT) with an agent-layer API key, role-based access control, plan feature gating, monthly quota enforcement, input validation, encrypted agent messages, audit trail | Managed identity, secrets management, TLS, least privilege, threat modelling and penetration testing |
 | Privacy | No real patient data required for the demo | Privacy impact assessment, access controls, retention policy and applicable health-data safeguards |
 | Human oversight | Reports explicitly require professional review | Defined review workflow, escalation criteria and documented accountability |
 | Software quality | Automated unit tests and evaluation notebook | Verification/validation plan, traceability, release controls and post-market monitoring where applicable |
