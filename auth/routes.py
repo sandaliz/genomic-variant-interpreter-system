@@ -14,11 +14,13 @@ from sqlalchemy.orm import Session
 
 from auth.dependencies import get_current_user
 from auth.schemas import (
+    ChangePasswordRequest,
     LoginRequest,
     MeResponse,
     PasswordResetConfirmRequest,
     PasswordResetRequest,
     PasswordResetRequestedResponse,
+    ProfileUpdateRequest,
     RegisterRequest,
     TokenResponse,
     UserOut,
@@ -196,13 +198,13 @@ def confirm_password_reset(
     )
 
 
-@router.get("/me", response_model=MeResponse)
-def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    used = usage_this_month(db, current_user.id)
-    info = entitlements(current_user, used)
+def _me_response(user: User, db: Session) -> MeResponse:
+    """Build the standard /me payload for an account."""
+    used = usage_this_month(db, user.id)
+    info = entitlements(user, used)
     return MeResponse(
-        user=_public_user(current_user),
-        plan=current_user.plan,
+        user=_public_user(user),
+        plan=user.plan,
         usage={
             "used_this_month": used,
             "monthly_limit": info["monthly_limit"],
@@ -214,3 +216,82 @@ def me(current_user: User = Depends(get_current_user), db: Session = Depends(get
             "audit_export": info["audit_export"],
         },
     )
+
+
+@router.get("/me", response_model=MeResponse)
+def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    The signed-in account, its plan, its monthly usage and its entitlements.
+
+    This is what the profile page and the header quota meter are built from.
+    """
+    return _me_response(current_user, db)
+
+
+@router.patch("/me", response_model=MeResponse)
+def update_profile(
+    body: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update the signed-in account's own details.
+
+    full_name is free to change. email requires the current password, because
+    the address is where password recovery goes: without that check a stolen
+    session could redirect recovery to an attacker-controlled inbox and take the
+    account over permanently. username cannot be changed here.
+    """
+    if body.email is not None:
+        new_email = str(body.email).strip().lower()
+        if new_email != current_user.email:
+            if not body.current_password or not verify_password(
+                body.current_password, current_user.password_hash
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Current password is required to change your email address.")
+            clash = db.scalars(select(User).where(User.email == new_email)).first()
+            if clash is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="That email address is already registered.")
+            current_user.email = new_email
+
+    if body.full_name is not None:
+        cleaned = body.full_name.strip()
+        current_user.full_name = cleaned or None
+
+    db.commit()
+    db.refresh(current_user)
+    return _me_response(current_user, db)
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Change the signed-in account's password by proving the current one.
+
+    This is the profile-page path, and it is deliberately different from the
+    forgot-password flow: that one needs a mailed code because the credential is
+    gone, this one proves ownership with the credential still in hand. It also
+    does not revoke tokens already issued -- a password change replaces the
+    credential, not every live session.
+    """
+    if not verify_password(body.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Current password is incorrect.")
+    if verify_password(body.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="New password must be different from the current one.")
+
+    current_user.password_hash = hash_password(body.new_password)
+    db.commit()
+    # Response says only that it happened -- never the password, never the hash.
+    return {"changed": True}

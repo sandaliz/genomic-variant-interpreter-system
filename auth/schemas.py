@@ -6,7 +6,7 @@ Pydantic v2 request/response contracts for the account layer.
 
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
@@ -93,6 +93,43 @@ class MeResponse(BaseModel):
     # so the UI can sign the user in without a second round-trip.
     access_token: Optional[str] = None
     expires_in: Optional[int] = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    """
+    What a signed-in user may change about their own account.
+
+    username is deliberately absent: it is the primary identifier, it is baked
+    into issued tokens, and it appears in the audit trail (review sign-offs
+    reference the reviewing account). Renaming accounts retroactively rewrites
+    history, so it stays immutable after registration.
+
+    email is the password-reset identity, so changing it requires the current
+    password -- otherwise anyone with a stolen session could point recovery at an
+    address they control and take the account over permanently.
+    """
+
+    full_name: Optional[str] = Field(default=None, max_length=120)
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = Field(default=None, max_length=128)
+
+    # Pydantic ignores unknown fields by default, which would mean a client
+    # sending {"is_admin": true} gets a cheerful 200 while nothing happens.
+    # Forbidding extras makes a typo or a stray field an explicit 422.
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChangePasswordRequest(BaseModel):
+    """
+    Password change for a signed-in user.
+
+    Distinct from the forgot-password flow: that one needs a mailed code because
+    the person has lost the credential, this one proves ownership with the
+    credential they still hold.
+    """
+
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class TokenResponse(BaseModel):

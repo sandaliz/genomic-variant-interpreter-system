@@ -389,7 +389,30 @@ the administrator's note on their own profile.
 reportable step that happens before a decision — collapsing it into `pending`
 would hide that from both the user and the audit trail.
 
-## 11. Where the secrets live
+## 11. Editing your own details
+
+`PATCH /api/auth/me` updates the signed-in account, and `POST /api/auth/change-password`
+changes its password. What each field is allowed to do is a deliberate decision:
+
+| Field | Policy | Why |
+|---|---|---|
+| `full_name` | Free to change | Cosmetic; blank clears it back to null |
+| `email` | **Requires the current password** | The address is where password recovery goes. Without that check, anyone holding a stolen session could redirect recovery to an inbox they control and take the account over permanently |
+| `username` | **Immutable** | It is the primary identifier, it is baked into issued tokens, and it appears in the audit trail. Renaming would rewrite history retroactively |
+| password | `POST /api/auth/change-password` | Proves ownership with the credential still held — the opposite situation from the forgot-password flow, which needs a mailed code because the credential is gone |
+
+Setting an email to its current value is a no-op and does not demand the
+password, because nothing changes. Neither response ever contains password
+material.
+
+Unknown fields are **rejected** (`422`), not ignored. Pydantic discards extras by
+default, which would mean a client sending `{"is_admin": true}` gets a cheerful
+`200` while nothing happens — exactly the kind of silent no-op that hides a bug
+until it matters.
+
+---
+
+## 12. Where the secrets live
 
 There is no container image and no infrastructure-as-code file in this project, so
 there is nowhere for a credential to be baked into by accident:
@@ -404,10 +427,10 @@ there is nowhere for a credential to be baked into by accident:
 
 ---
 
-## 12. Tests
+## 13. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 240 tests
+python3 -m pytest tests/ -v      # 279 tests
 ```
 
 | File | Tests | Covers |
@@ -419,6 +442,8 @@ python3 -m pytest tests/ -v      # 240 tests
 | `tests/test_review_signoffs.py` | 17 | sign-off persistence, ownership, durability |
 | `tests/test_password_reset.py` | 23 | email login, code hashing, expiry, replay, attempt cap |
 | `tests/test_upgrades.py` | 25 | upgrade lifecycle, plan swap, terminal states |
+| `tests/test_profile.py` | 20 | profile editing, email-change guard, self-service password change |
+| `tests/test_analytics.py` | 19 | dashboard figures, gap-filled daily series, role checks |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
 | existing agent tests | 75 | unchanged four-agent behaviour |
 
@@ -430,7 +455,7 @@ PostgreSQL.
 
 ---
 
-## 13. Security checklist before production
+## 14. Security checklist before production
 
 - [ ] Set a real `JWT_SECRET_KEY`; never rely on the development fallback.
 - [ ] Set `FRONTEND_ORIGINS` to the real deployment origins.

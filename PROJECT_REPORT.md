@@ -339,6 +339,8 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Numpy-safe serialization** | `protocol/message.py` | Custom `NumpyJSONEncoder` handles pandas/numpy types during encryption |
 | **Attestation durability** | `db/models.py` (`ReviewSignoff`) | Human sign-offs live in PostgreSQL with an accountable owner (`reviewed_by`); the FK is `ON DELETE SET NULL` so deleting an account cannot erase a clinical attestation |
 | **Account recovery** | `services/password_reset.py`, `services/mailer.py` | Forgotten-password flow: 6-digit code delivered through a pluggable mailer. Codes are stored only as salted SHA-256 digests, are single-use, expire in 10 minutes and burn after 5 attempts; the request endpoint answers identically for unknown addresses so it cannot enumerate accounts |
+| **Profile integrity** | `auth/routes.py` | Signed-in users may edit `full_name` freely; changing `email` requires the current password because that address is where recovery goes; `username` is immutable because it is the primary identifier baked into issued tokens and the audit trail. Unknown fields are rejected rather than silently ignored |
+| **Operational visibility** | `services/analytics_service.py` | Administrator dashboard figures (accounts, query volume, plan mix, upgrade queue, sign-offs) computed live from the same tables the app writes, so a displayed number cannot drift from the data it describes. The daily series is gap-filled so a quiet day reads as a real dip |
 | **Subscription lifecycle** | `services/upgrade_service.py` | Upgrade hand-off: a user requests a paid plan, an administrator approves/declines/marks contacted. Approval applies the plan change in the same transaction as the decision; decided states are terminal; the requester keeps their working plan and quota while waiting and is notified by email |
 | **Credential isolation** | `.gitignore`, `.env.example` | `.env` is gitignored and `DATABASE_URL` / `JWT_SECRET_KEY` are supplied per developer or per deployment. The project ships no container image and no infrastructure-as-code file, so there is nothing for a credential to be baked into. Database connections require TLS (`sslmode=require`) |
 
@@ -596,6 +598,7 @@ variant_agent_system/
 │   └── models.py                # Plan, User, UsageRecord
 ├── services/
 │   ├── entitlement_service.py   # Quota windows, feature gates, usage recording
+│   ├── analytics_service.py     # Admin dashboard figures (gap-filled daily series)
 │   ├── mailer.py                # Pluggable outbound email (log / resend / smtp)
 │   ├── password_reset.py        # Issue + redeem one-time reset codes
 │   └── upgrade_service.py       # Upgrade request lifecycle
@@ -653,7 +656,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 240 tests (no database required)
+python3 -m pytest tests/ -v    # 279 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
 # Evaluation
@@ -680,4 +683,4 @@ This project fulfills all assignment requirements:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **215 passing unit tests** (75 agent/protocol + 165 auth/entitlement/role/review)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **215 passing unit tests** (75 agent/protocol + 204 auth/entitlement/role/review)

@@ -55,6 +55,7 @@ from services.entitlement_service import (
     record_usage,
     usage_this_month,
 )
+from services.analytics_service import build_analytics
 from services.mailer import get_mailer
 from services.upgrade_service import (
     create_request as upgrade_create,
@@ -783,6 +784,23 @@ def my_upgrade_requests(
     ).all()
     return {"total": len(rows),
             "requests": [_upgrade_payload(r) for r in rows]}
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics(
+    days: int = 30,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Dashboard figures: accounts, query volume, plan mix, upgrade queue, sign-offs.
+
+    Everything is counted live from the same tables the rest of the app writes,
+    so a number here can never drift from the data it describes.
+    """
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
+    return build_analytics(db, days)
 
 
 @app.get("/api/admin/upgrade-requests")
