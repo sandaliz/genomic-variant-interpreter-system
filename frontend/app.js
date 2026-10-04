@@ -23,7 +23,7 @@ EXAMPLES.forEach(({ label, q }) => {
   b.className = 'example-btn';
   b.innerHTML = '<span class="ex-label">' + escapeHtml(label) + '</span>' + escapeHtml(q);
   b.onclick = () => {
-    if (getToken()){
+    if (hasSession()){
       document.getElementById('query').value = q;
       showView('workspace');
       classifyVariant();
@@ -47,9 +47,203 @@ const VIEWS = ['landing', 'workspace', 'profile', 'admin'];
 let currentView = 'landing';
 let currentUser = null;
 let pendingQuery = null;   // a landing example waiting for sign-in
+// Guards the one-time "send a newly signed-in user to their home view" redirect,
+// so a later session refresh cannot drag them out of a page they chose.
+let sessionBootstrapped = false;
 
-function showView(name){
-  if (name === 'workspace' && !getToken()){
+// ---- Loading feedback -------------------------------------------------
+// The profile page and the admin dashboard each wait on several API calls, and
+// Neon scales its compute to zero between requests, so the first call of a
+// session can take seconds. Without a signal the page just sits there and then
+// snaps into place, which reads as a broken app rather than as work happening.
+
+// Guards against a slow response painting over a view the user has since left.
+let loadSeq = 0;
+
+// Hold a skeleton for long enough to be legible. Showing it for 80ms and then
+// yanking it away is worse than showing nothing at all.
+const MIN_SKELETON_MS = 250;
+
+function startLoadBar(){
+  const bar = document.getElementById('loadBar');
+  if (!bar) return;
+  bar.classList.remove('done');
+  // Reflow so a restart animates even when the bar is already mid-width.
+  void bar.offsetWidth;
+  bar.classList.add('on');
+}
+
+function stopLoadBar(){
+  const bar = document.getElementById('loadBar');
+  if (!bar) return;
+  bar.classList.add('done');
+  bar.classList.remove('on');
+}
+
+// Fills containers with skeleton blocks, and returns how long to wait before
+// the real content may be painted, so a fast response does not make the
+// placeholder flash for a single frame.
+function showSkeletons(map){
+  const started = Date.now();
+  Object.entries(map).forEach(([id, html]) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+  return Math.max(0, MIN_SKELETON_MS - (Date.now() - started));
+}
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Some regions hold real, static markup (the profile form fields) that must
+// survive the load. Their markup is stashed before the skeleton goes in and put
+// back afterwards, so the inputs the caller then populates are the real ones.
+function showSkeletonHost(id, html){
+  const el = document.getElementById(id);
+  if (!el || el.dataset.stashed) return;
+  el.dataset.stashed = el.innerHTML;
+  el.innerHTML = html;
+}
+
+function restoreSkeletonHost(id){
+  const el = document.getElementById(id);
+  if (!el || !el.dataset.stashed) return;
+  el.innerHTML = el.dataset.stashed;
+  delete el.dataset.stashed;
+}
+
+// Reusable multi-line placeholder block.
+const SKELETON_LINES =
+  '<div class="skeleton skeleton-line medium"></div>'
+  + '<div class="skeleton skeleton-line"></div>'
+  + '<div class="skeleton skeleton-line short"></div>';
+
+// ---- Confirmation dialog ---------------------------------------------
+// Every consequential action goes through here rather than window.prompt /
+// window.confirm / window.alert, which cannot express a required justification,
+// cannot be styled, and read as browser chrome rather than as the product.
+let confirmResolver = null;
+
+// Puts a button into a working state and back, so an action always shows that
+// something is happening instead of appearing to do nothing.
+function setBusy(btn, busy, label){
+  if (!btn) return;
+  if (busy){
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    btn.disabled = true;
+    if (label) btn.textContent = label;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.idleLabel){
+      btn.textContent = btn.dataset.idleLabel;
+      delete btn.dataset.idleLabel;
+    }
+  }
+}
+
+/**
+ * Ask the user to confirm an action, optionally collecting a note.
+ *
+ * Resolves to { confirmed: boolean, note: string | null }.
+ *
+ * opts:
+ *   title, message          - required copy
+ *   confirmLabel            - button text (default "Confirm")
+ *   danger                  - styles the confirm button as destructive
+ *   note                    - null, or:
+ *                               { label, placeholder, hint, required,
+ *                                 minLength, value }
+ */
+function askConfirm(opts){
+  const o = opts || {};
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirmModal');
+    const okBtn = document.getElementById('confirmOk');
+    const cancelBtn = document.getElementById('confirmCancel');
+    const wrap = document.getElementById('confirmNoteWrap');
+    const textarea = document.getElementById('confirmNote');
+    const counter = document.getElementById('confirmNoteCount');
+    const spec = o.note || null;
+
+    document.getElementById('confirmTitle').textContent = o.title || 'Are you sure?';
+    document.getElementById('confirmMsg').textContent = o.message || '';
+
+    okBtn.textContent = o.confirmLabel || 'Confirm';
+    okBtn.classList.toggle('danger', !!o.danger);
+
+    if (spec){
+      wrap.classList.remove('hidden');
+      document.getElementById('confirmNoteLabel').textContent = spec.label || 'Note';
+      document.getElementById('confirmNoteHint').textContent =
+        spec.hint || (spec.required ? 'This is required.' : 'Optional.');
+      textarea.placeholder = spec.placeholder || '';
+      textarea.value = spec.value || '';
+    } else {
+      wrap.classList.add('hidden');
+      textarea.value = '';
+    }
+
+    function updateCounter(){
+      const max = Number(textarea.getAttribute('maxlength')) || 500;
+      const used = textarea.value.trim().length;
+      const min = (spec && spec.minLength) || 0;
+      counter.textContent = used + ' / ' + max;
+      const short = min > 0 && used > 0 && used < min;
+      counter.classList.toggle('short', short || (min > 0 && used === 0 && spec.required));
+      okBtn.disabled = !!spec && spec.required && used < min;
+      if (short) counter.textContent = used + ' / ' + max + ' (min ' + min + ')';
+    }
+
+    // Called on EVERY open, not just when there is a note. updateCounter() is the
+    // only thing that writes okBtn.disabled, so a dialog that skips it inherits
+    // whatever the previous dialog left behind -- which is how a required-note
+    // dialog (upgrade justification, admin decline) could permanently lock the
+    // Confirm button on every later dialog that has no note, including the
+    // clinical sign-off. With no spec, min is 0 and this always re-enables.
+    updateCounter();
+
+    function finish(confirmed){
+      const note = spec ? (textarea.value.trim() || null) : null;
+      modal.classList.add('hidden');
+      confirmResolver = null;
+      // Backstop: never hand the next dialog an inherited disabled button.
+      okBtn.disabled = false;
+      counter.classList.remove('short');
+      document.removeEventListener('keydown', onKey, true);
+      if (okBtn._onclick) okBtn.removeEventListener('click', okBtn._onclick);
+      if (cancelBtn._onclick) cancelBtn.removeEventListener('click', cancelBtn._onclick);
+      if (textarea._oninput) textarea.removeEventListener('input', textarea._oninput);
+      resolve({ confirmed, note });
+    }
+
+    function onKey(e){
+      if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); finish(false); }
+    }
+
+    okBtn._onclick = () => finish(true);
+    cancelBtn._onclick = () => finish(false);
+    okBtn.addEventListener('click', okBtn._onclick);
+    cancelBtn.addEventListener('click', cancelBtn._onclick);
+    textarea._oninput = updateCounter;
+    textarea.addEventListener('input', textarea._oninput);
+    // Clicking the backdrop cancels, like the auth modal.
+    modal.onclick = e => { if (e.target === modal) finish(false); };
+    document.addEventListener('keydown', onKey, true);
+    confirmResolver = finish;
+
+    modal.classList.remove('hidden');
+    if (spec){ setTimeout(() => textarea.focus(), 30); }
+    else setTimeout(() => okBtn.focus(), 30);
+  });
+}
+
+// Lets Escape close a confirmation even when focus is inside it.
+function closeConfirm(){
+  if (confirmResolver) confirmResolver(false);
+}
+
+function showView(name, opts){
+  const fromHistory = opts && opts.fromHistory;
+  if (name === 'workspace' && !hasSession()){
     // Never show the query surface to someone who cannot use it yet.
     pendingQuery = document.getElementById('query').value.trim() || null;
     openAuth('signin');
@@ -57,7 +251,7 @@ function showView(name){
   }
   if (name === 'admin' && !(currentUser && currentUser.user.role === 'admin')){
     // UI convenience only -- the endpoints enforce require_admin regardless.
-    if (getToken()){
+    if (hasSession()){
       adminMessage('Admin role required. This account cannot reach the dashboard.', true);
       showView('workspace');
       return;
@@ -68,13 +262,89 @@ function showView(name){
     const el = document.getElementById('view' + v.charAt(0).toUpperCase() + v.slice(1));
     if (el) el.classList.toggle('hidden', v !== name);
   });
+  // Keep the address bar in step, unless the browser back button drove this.
+  if (!fromHistory) pushViewUrl(name);
   window.scrollTo({ top: 0, behavior: 'auto' });
   if (name === 'profile') loadProfile();
   if (name === 'admin') loadAdminPage();
 }
 
+// ---- Routing ------------------------------------------------------------
+// The four views are one document, so the URL is driven by history.pushState
+// rather than by server round trips. Every view has a real slug, which means the
+// back button, a refresh and a pasted link all land in the right place.
+const VIEW_SLUGS = {
+  landing: '/',
+  workspace: '/analyse',
+  profile: '/profile',
+  admin: '/admin-dashboard',
+};
+
+function slugFor(view){
+  return VIEW_SLUGS[view] || '/';
+}
+
+function viewForSlug(pathname){
+  const slug = (pathname || '/').replace(/\/+$/, '').toLowerCase() || '/';
+  return Object.keys(VIEW_SLUGS).find(v => VIEW_SLUGS[v] === slug) || null;
+}
+
+// Push the URL without reloading. Skipped when the URL already matches, so
+// clicking the current view's nav item does not pile up history entries.
+function pushViewUrl(view){
+  const target = slugFor(view);
+  if (window.location.pathname === target) return;
+  try {
+    window.history.pushState({ view }, '', target);
+  } catch (err){
+    // file:// origins reject pushState. The app still works without deep links.
+  }
+}
+
+window.addEventListener('popstate', () => {
+  const view = viewForSlug(window.location.pathname);
+  if (view) showView(view, { fromHistory: true });
+});
+
+// Where a signed-in user should land straight after signing in. An
+// administrator's primary surface is the dashboard, not the query box.
+function homeViewFor(me){
+  if (!me) return 'landing';
+  return (me.user && me.user.role === 'admin') ? 'admin' : 'workspace';
+}
+
+// The logo means "home" -- the marketing page -- for everyone.
+//
+// It used to double as a shortcut into the query surface, which made the header
+// ambiguous: two different things were called "home". The dedicated Analyse
+// button now owns the workspace, the Admin button owns the dashboard, and the
+// profile lives in the avatar menu.
 function goHome(){
-  showView(getToken() ? 'workspace' : 'landing');
+  showView('landing');
+}
+
+// Header/footer navigation to a landing-page section.
+//
+// The nav is global, so a link may be clicked from the workspace or the admin
+// dashboard, where the target section does not exist. Switch to the landing view
+// first, then scroll -- doing it in that order is what makes the anchor resolve.
+function goToSection(id){
+  const scroll = () => {
+    const target = document.getElementById(id);
+    if (!target) return;
+    const header = document.querySelector('.site-header');
+    const offset = header ? header.offsetHeight + 16 : 16;
+    const top = target.getBoundingClientRect().top + window.pageYOffset - offset;
+    window.scrollTo({ top, behavior: 'smooth' });
+  };
+
+  if (currentView !== 'landing'){
+    showView('landing');
+    // Let the view swap render before measuring.
+    requestAnimationFrame(() => requestAnimationFrame(scroll));
+  } else {
+    scroll();
+  }
 }
 
 function toggleProfileMenu(event){
@@ -91,27 +361,59 @@ document.addEventListener('click', () => {
     document.getElementById('avatarBtn').setAttribute('aria-expanded', 'false');
   }
 });
-// It is a short-lived access token, not a credential store: the server
-// re-reads the account from PostgreSQL on every request, so signing out
-// or deactivating an account takes effect immediately.
-const TOKEN_KEY = 'variantlens_token';
+// The session token lives in an HttpOnly cookie, which JavaScript cannot read.
+// That is the point: an XSS bug elsewhere on the page can no longer exfiltrate a
+// working credential, because there is nothing in script to steal.
+//
+// A second, deliberately readable cookie holds the CSRF token. Its presence is
+// what tells us a session exists -- the server never has to expose the token
+// itself for the client to answer "am I signed in?".
+//
+// Bearer tokens still work for scripted clients (curl, the test suite): the API
+// accepts either transport, and only cookie-authenticated writes need the CSRF
+// header.
+const CSRF_COOKIE = 'variantlens_csrf';
+const CSRF_HEADER = 'X-CSRF-Token';
 
-function getToken(){ return localStorage.getItem(TOKEN_KEY); }
-function setToken(token){
-  if (token) { localStorage.setItem(TOKEN_KEY, token); }
-  else { localStorage.removeItem(TOKEN_KEY); }
+function readCookie(name){
+  const match = document.cookie.match(
+    new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+// "Do we have a session?" -- answered without ever seeing the token itself.
+function hasSession(){ return !!readCookie(CSRF_COOKIE); }
+
+function csrfToken(){ return readCookie(CSRF_COOKIE); }
+
+// The server clears both cookies on sign-out. This has to cover the case the
+// server cannot: an expired session cookie leaves the CSRF cookie behind, and
+// because that cookie is deliberately readable we can and should drop it here.
+// Otherwise hasSession() keeps reporting a session that no longer exists, and
+// the UI oscillates between signed-in and signed-out.
+function clearSession(){
+  localStorage.removeItem('variantlens_token');
+  document.cookie = CSRF_COOKIE + '=; Max-Age=0; Path=/; SameSite=lax';
 }
 
 function authHeaders(extra){
-  return Object.assign({}, extra || {}, (getToken() ? {'Authorization': 'Bearer ' + getToken()} : {}));
+  const headers = Object.assign({}, extra || {});
+  // Sent on every request so cookie-authenticated writes can be verified.
+  const csrf = csrfToken();
+  if (csrf) headers[CSRF_HEADER] = csrf;
+  return headers;
 }
 
 async function authFetch(path, options){
-  const opts = Object.assign({}, options || {}, { headers: authHeaders((options || {}).headers) });
+  const opts = Object.assign({}, options || {}, {
+    headers: authHeaders((options || {}).headers),
+    // Send the session cookie. Same-origin, so no cross-site credential.
+    credentials: 'same-origin',
+  });
   const res = await fetch(path, opts);
-  if (res.status === 401 && getToken()){
+  if (res.status === 401 && hasSession()){
     // Expired, revoked or deactivated session: drop it and ask again.
-    setToken(null);
+    clearSession();
     renderSession(null);
   }
   return res;
@@ -150,7 +452,32 @@ document.getElementById('authModal').addEventListener('click', e => {
   if (e.target.id === 'authModal') closeAuth();
 });
 
+function applySessionVisibility(me){
+  /*
+   * Drives every [data-when] element: "out" is for anonymous visitors, "in" for
+   * a signed-in account. The landing page is a marketing page as well as a
+   * product one, so offering "Create a free account" and "Sign in" to someone
+   * who is already signed in is both confusing and faintly insulting.
+   *
+   * Declared in the markup rather than wired up id by id in JS, so adding a
+   * conditional CTA is a one-attribute change.
+   */
+  const isIn = !!me;
+  document.querySelectorAll('[data-when]').forEach(el => {
+    el.classList.toggle('hidden', (el.dataset.when === 'in') !== isIn);
+  });
+  const out = document.getElementById('footerAccountOut');
+  const inCol = document.getElementById('footerAccountIn');
+  if (out) out.classList.toggle('hidden', isIn);
+  if (inCol) inCol.classList.toggle('hidden', !isIn);
+  if (me){
+    const adminLink = document.getElementById('footerAdminLink');
+    if (adminLink) adminLink.classList.toggle('hidden', me.user.role !== 'admin');
+  }
+}
+
 function renderSession(me){
+  applySessionVisibility(me);
   const signedOut = document.getElementById('headerSignedOut');
   const signedIn = document.getElementById('headerSignedIn');
   if (!me){
@@ -166,6 +493,7 @@ function renderSession(me){
   currentUser = me;
   const isAdmin = me.user.role === 'admin';
   document.getElementById('adminNavBtn').classList.toggle('hidden', !isAdmin);
+  document.getElementById('analyseNavBtn').classList.remove('hidden');
   document.getElementById('pmAdminItem').classList.toggle('hidden', !isAdmin);
 
   const displayName = me.user.full_name || me.user.username;
@@ -186,27 +514,64 @@ function renderSession(me){
   fill.style.width = pct + '%';
   // Warn in the last 20% so a clinician sees the ceiling before hitting it.
   fill.className = 'quota-fill' + (limit && pct >= 80 ? ' warn' : '');
+
+  // Landing-page copy that should not offer a plan the visitor is already on.
+  const heroNote = document.getElementById('heroSignedInNote');
+  if (heroNote){
+    heroNote.textContent = (limit === null || limit === undefined)
+      ? 'Signed in as ' + displayName + ' · ' + me.plan.name + ' plan · unlimited queries'
+      : 'Signed in as ' + displayName + ' · ' + me.plan.name + ' plan · '
+        + used + ' / ' + limit + ' queries used this month';
+  }
+  const freeNote = document.getElementById('freePlanNote');
+  if (freeNote){
+    const onFree = String(me.plan.name).trim().toLowerCase() === 'free';
+    freeNote.textContent = onFree
+      ? 'You are on this plan.'
+      : 'You are on ' + me.plan.name + '. Switch plans from your account.';
+  }
 }
 
-async function refreshSession(){
-  if (!getToken()){ renderSession(null); showView('landing'); return; }
+async function refreshSession(opts){
+  const silent = opts && opts.silent;
+  if (!hasSession()){ renderSession(null); showView('landing'); return; }
+  // A stored token means the first call of the session is a round trip to a
+  // possibly-waking database. Show the bar so the landing page does not just sit
+  // there before jumping to the workspace. Background refreshes (after a query)
+  // skip it -- flashing a progress bar over a finished result is noise.
+  if (!silent) startLoadBar();
   try {
     const res = await fetch('/api/auth/me', { headers: authHeaders() });
-    if (!res.ok){ setToken(null); renderSession(null); showView('landing'); return; }
-    renderSession(await res.json());
+    if (!res.ok){ clearSession(); renderSession(null); showView('landing'); return; }
+    const me = await res.json();
+    renderSession(me);
     // Landing is what a signed-out visitor sees; once signed in we go to the
     // workspace unless a landing example already queued a query.
     if (pendingQuery){
       const q = pendingQuery; pendingQuery = null;
       document.getElementById('query').value = q;
       showView('workspace');
-    } else if (currentView === 'landing'){
-      showView('workspace');
+    } else if (currentView === 'landing' && !sessionBootstrapped){
+      // Only on the very first load of the session. Without this guard, a
+      // signed-in user who deliberately clicked the logo to read the landing
+      // page would be dragged back into the tool by the next session refresh --
+      // which also runs after every query, to update the quota bar.
+      sessionBootstrapped = true;
+      // Honour a deep link first: someone who pasted /profile or
+      // /admin-dashboard should land where they asked, not on the default.
+      const requested = viewForSlug(window.location.pathname);
+      if (requested && requested !== 'landing'){
+        showView(requested);
+      } else {
+        showView(homeViewFor(me));
+      }
     }
   } catch (err){
-    setToken(null);
+    clearSession();
     renderSession(null);
     showView('landing');
+  } finally {
+    if (!silent) stopLoadBar();
   }
 }
 
@@ -225,25 +590,28 @@ async function doLogin(event){
   const btn = document.getElementById('loginBtn');
   const err = document.getElementById('loginError');
   err.textContent = '';
-  btn.disabled = true;
+  setBusy(btn, true, 'Signing in…');
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        username: document.getElementById('loginUsername').value.trim(),
+        email: document.getElementById('loginUsername').value.trim(),
         password: document.getElementById('loginPassword').value
       })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(describeAuthError(data, 'Sign in failed.'));
-    setToken(data.access_token);
+    // The session cookie is already set by the response; nothing to store here.
     document.getElementById('loginPassword').value = '';
     await refreshSession();
+    // Dismiss the modal only once the session is actually established, so a
+    // failure leaves the form up with its error still visible.
+    closeAuth();
   } catch (e){
     err.textContent = e.message;
   } finally {
-    btn.disabled = false;
+    setBusy(btn, false);
   }
   return false;
 }
@@ -253,7 +621,7 @@ async function doRegister(event){
   const btn = document.getElementById('registerBtn');
   const err = document.getElementById('registerError');
   err.textContent = '';
-  btn.disabled = true;
+  setBusy(btn, true, 'Creating account…');
   try {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
@@ -277,13 +645,13 @@ async function doRegister(event){
     });
     const session = await login.json().catch(() => ({}));
     if (!login.ok) throw new Error(describeAuthError(session, 'Registration failed.'));
-    setToken(session.access_token);
+    // The session cookie is already set by the response.
     document.getElementById('regPassword').value = '';
     await refreshSession();
   } catch (e){
     err.textContent = e.message;
   } finally {
-    btn.disabled = false;
+    setBusy(btn, false);
   }
   return false;
 }
@@ -293,7 +661,7 @@ async function doForgotPassword(event){
   const btn = document.getElementById('forgotBtn');
   const err = document.getElementById('forgotError');
   err.textContent = '';
-  btn.disabled = true;
+  setBusy(btn, true, 'Sending…');
   const email = document.getElementById('forgotEmail').value.trim();
   try {
     const res = await fetch('/api/auth/password-reset/request', {
@@ -317,7 +685,7 @@ async function doForgotPassword(event){
   } catch (e){
     err.textContent = e.message;
   } finally {
-    btn.disabled = false;
+    setBusy(btn, false);
   }
   return false;
 }
@@ -327,7 +695,7 @@ async function doConfirmReset(event){
   const btn = document.getElementById('resetBtn');
   const err = document.getElementById('resetError');
   err.textContent = '';
-  btn.disabled = true;
+  setBusy(btn, true, 'Updating…');
   try {
     const res = await fetch('/api/auth/password-reset/confirm', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -340,27 +708,34 @@ async function doConfirmReset(event){
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(describeAuthError(body, 'Could not reset the password.'));
     // The reset endpoint mints a session, so we go straight in.
-    setToken(body.access_token);
     closeAuth();
     renderSession(body);
     showView('workspace');
   } catch (e){
     err.textContent = e.message;
   } finally {
-    btn.disabled = false;
+    setBusy(btn, false);
   }
   return false;
 }
 
 function logout(){
-  setToken(null);
-  currentUser = null;
-  renderSession(null);
-  closeAuth();
-  latestResult = null;
-  document.getElementById('results').style.display = 'none';
-  document.getElementById('empty').style.display = 'block';
-  showView('landing');
+  // Ask the server to clear the cookies first. Locally forgetting things is not
+  // enough: the HttpOnly cookie is unreadable from script and would simply be
+  // re-sent on the next request.
+  authFetch('/api/auth/logout', { method: 'POST' })
+    .catch(() => {})
+    .finally(() => {
+      currentUser = null;
+      // So the next person to sign in is routed to their home view again.
+      sessionBootstrapped = false;
+      renderSession(null);
+      closeAuth();
+      latestResult = null;
+      document.getElementById('results').style.display = 'none';
+      document.getElementById('empty').style.display = 'block';
+      showView('landing');
+    });
 }
 
 // ---- Admin: shared state + account controls ------------------------
@@ -371,13 +746,18 @@ let adminPlans = [];
 
 function renderPlanCards(plans){
   const el = document.getElementById('adminPlanCards');
+  if (!el) return;
   el.innerHTML = plans.map(p => {
     const price = p.price_cents === null || p.price_cents === undefined
       ? 'Custom'
       : '$' + (p.price_cents / 100).toFixed(2);
     const limit = p.is_unlimited ? 'Unlimited' : (p.monthly_query_limit + '/mo');
-    return '<div class="plan-card">'
-      + '<div class="pc-name">' + escapeHtml(p.name) + '</div>'
+    // Mark the plan the signed-in user is actually on, if we know it.
+    const isCurrent = !!(currentUser && currentUser.plan
+      && currentUser.plan.id === p.id);
+    return '<div class="plan-card' + (isCurrent ? ' active' : '') + '">'
+      + '<div class="pc-name">' + escapeHtml(p.name)
+      + (isCurrent ? '<span class="pc-flag">Your plan</span>' : '') + '</div>'
       + '<div class="pc-meta">' + escapeHtml(price) + ' · ' + escapeHtml(limit) + '</div>'
       + '<div class="pc-meta">' + p.subscribers + ' account' + (p.subscribers === 1 ? '' : 's') + '</div>'
       + '</div>';
@@ -400,8 +780,8 @@ function renderAdminUsers(users){
       '<td><div>' + escapeHtml(u.username) + '</div>'
       + '<div style="color:var(--ink-faint);font-size:11px;">' + escapeHtml(u.email) + '</div>'
       + '<div style="color:var(--ink-faint);font-size:10.5px;">' + escapeHtml(u.role) + '</div></td>'
-      + '<td><select class="admin-select" onchange="adminChangePlan(' + u.id + ', this.value)">'
-      + planOptions(u.plan_id) + '</select></td>'
+      + '<td><select class="admin-select" onchange="adminChangePlan(' + u.id
+      + ', this.value, this)">' + planOptions(u.plan_id) + '</select></td>'
       + '<td>' + u.used_this_month + '</td>'
       + '<td><button class="admin-btn" onclick="adminToggleActive(' + u.id + ', '
       + u.is_active + ')">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button></td>';
@@ -409,7 +789,21 @@ function renderAdminUsers(users){
   });
 }
 
-async function adminChangePlan(userId, planId){
+async function adminChangePlan(userId, planId, selectEl){
+  const target = adminPlans.find(p => String(p.id) === String(planId));
+  const answer = await askConfirm({
+    title: 'Change plan?',
+    message: 'This moves the account onto the '
+      + (target ? target.name : 'selected') + ' plan straight away, changing their '
+      + 'monthly query allowance and which reasoning engine is available.',
+    confirmLabel: 'Change plan',
+  });
+  if (!answer.confirmed){
+    // Put the select back where it was; the user did not agree to the change.
+    await loadAdminPanel();
+    return;
+  }
+
   adminMessage('Saving…');
   const res = await authFetch('/api/admin/users/' + userId, {
     method: 'PATCH',
@@ -428,6 +822,17 @@ async function adminChangePlan(userId, planId){
 
 async function adminToggleActive(userId, currentlyActive){
   const next = !currentlyActive;
+  const answer = await askConfirm({
+    title: next ? 'Activate this account?' : 'Deactivate this account?',
+    message: next
+      ? 'The account can sign in and run queries again immediately.'
+      : 'The account is signed out and blocked from signing in again. Their stored '
+        + 'data and sign-off history are kept.',
+    confirmLabel: next ? 'Activate account' : 'Deactivate account',
+    danger: !next,
+  });
+  if (!answer.confirmed) return;
+
   adminMessage(next ? 'Activating…' : 'Deactivating…');
   const res = await authFetch('/api/admin/users/' + userId, {
     method: 'PATCH',
@@ -449,22 +854,150 @@ async function adminToggleActive(userId, currentlyActive){
 
 function setMsg(id, text, kind){
   const el = document.getElementById(id);
+  if (!el) return;
   el.textContent = text || '';
   el.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
+// Writes a value into a field, tolerating a missing element.
+//
+// The profile form lives inside skeleton hosts whose innerHTML is replaced
+// wholesale, so a field can genuinely be absent at the moment it is written to.
+// Setting .value on null threw "Cannot set properties of null" and aborted the
+// whole load, which is why "Your plan" used to render blank.
+function setFieldValue(id, value){
+  const el = document.getElementById(id);
+  if (!el){
+    console.warn('setFieldValue: #' + id + ' is not in the document');
+    return false;
+  }
+  el.value = value == null ? '' : value;
+  return true;
+}
+
+function setFieldDisabled(id, disabled){
+  const el = document.getElementById(id);
+  if (el) el.disabled = disabled;
+}
+
 async function loadProfile(){
-  if (!getToken()){ openAuth('signin'); return; }
-  const res = await authFetch('/api/auth/me');
-  if (!res.ok){ openAuth('signin'); return; }
-  const me = await res.json();
-  currentUser = me;
-  await loadMyUpgradeRequests();
-  document.getElementById('pfUsername').value = me.user.username;
-  document.getElementById('pfFullName').value = me.user.full_name || '';
-  document.getElementById('pfEmail').value = me.user.email;
-  document.getElementById('pfCurrentPw').value = '';
-  renderPlanBox(me);
+  if (!hasSession()){ openAuth('signin'); return; }
+  // The plan catalogue used to come from the admin-only endpoint, which left a
+  // regular user with an empty comparison and no upgrade button. Fetch it from
+  // the user-accessible /api/plans alongside the account details.
+  const seq = ++loadSeq;
+  startLoadBar();
+  // The plan box is the slow part: three round trips including the upgrade
+  // history. The account fields fill quickly but must not appear to be editable
+  // before we know who is signed in.
+  const settle = showSkeletons({
+    pfPlanBox: '<div class="skeleton skeleton-row">'
+      + '<div class="skeleton skeleton-line short"></div>'
+      + '<div class="skeleton skeleton-line medium"></div></div>'
+      + '<div class="skeleton skeleton-block"></div>'
+  });
+  showSkeletonHost('pfAccount', SKELETON_LINES);
+  showSkeletonHost('pfPassword', SKELETON_LINES);
+  ['pfUsername', 'pfFullName', 'pfEmail', 'pfCurrentPw', 'pfOldPw', 'pfNewPw']
+    .forEach(id => setFieldDisabled(id, true));
+
+  try {
+    const [res, plansRes] = await Promise.all([
+      authFetch('/api/auth/me'),
+      authFetch('/api/plans')
+    ]);
+    if (!res.ok){ openAuth('signin'); return; }
+    const me = await res.json();
+    currentUser = me;
+    if (plansRes.ok){
+      adminPlans = (await plansRes.json()).plans || [];
+    }
+    await loadMyUpgradeRequests();
+    if (seq !== loadSeq) return;
+    await wait(settle);
+
+    // Put the real form fields back BEFORE writing to them. showSkeletonHost()
+    // replaced their markup wholesale, so right now every #pf* input is a stale
+    // reference to a detached node. Restoring after the assignments -- which is
+    // what the finally block used to do -- is what produced
+    // "Cannot set properties of null (setting 'value')" and a blank plan card.
+    restoreSkeletonHost('pfAccount');
+    restoreSkeletonHost('pfPassword');
+
+    setFieldValue('pfUsername', me.user.username);
+    setFieldValue('pfFullName', me.user.full_name);
+    setFieldValue('pfEmail', me.user.email);
+    setFieldValue('pfCurrentPw', '');
+    renderPlanBox(me);
+  } catch (err){
+    if (seq !== loadSeq) return;
+    // Log it: the previous version surfaced the failure into a box that
+    // clearProfileSkeletons() immediately emptied, so a real error rendered as
+    // a blank card with no explanation anywhere.
+    console.error('loadProfile failed:', err);
+    clearProfileSkeletons();
+    // Written last, and never cleared afterwards, so the user sees why.
+    const box = document.getElementById('pfPlanBox');
+    if (box){
+      box.innerHTML = '<div class="form-msg err">Could not load your plan: '
+        + escapeHtml(err.message || String(err))
+        + '</div>';
+    }
+  } finally {
+    if (seq === loadSeq){
+      stopLoadBar();
+      // Idempotent safety net: covers the early-return paths above, which bail
+      // out before the restore above could run.
+      restoreSkeletonHost('pfAccount');
+      restoreSkeletonHost('pfPassword');
+      // pfUsername is deliberately disabled by design -- it is the account
+      // identifier -- so only the rest are re-enabled here.
+      ['pfFullName', 'pfEmail', 'pfCurrentPw', 'pfOldPw', 'pfNewPw']
+        .forEach(id => setFieldDisabled(id, false));
+    }
+  }
+}
+
+function clearProfileSkeletons(){
+  // Restores the real form fields and removes the plan-box placeholder. It must
+  // not be called after an error message has been written into the plan box.
+  restoreSkeletonHost('pfAccount');
+  restoreSkeletonHost('pfPassword');
+  const box = document.getElementById('pfPlanBox');
+  if (box) box.innerHTML = '';
+}
+
+function currentPlanSummary(me){
+  // Rendered from /api/auth/me alone, so it works even when the plan catalogue
+  // request failed.
+  const plan = (me && me.plan) || null;
+  const usage = (me && me.usage) || null;
+  if (!plan) return '';
+  const cap = plan.monthly_query_limit;
+  const allowance = plan.is_unlimited || cap === null || cap === undefined
+    ? 'Unlimited queries'
+    : cap + ' queries / month';
+  const used = usage && usage.used_this_month !== undefined
+    ? usage.used_this_month : null;
+  const pct = used !== null && cap ? Math.min(100, Math.round((used / cap) * 100)) : null;
+
+  return '<div class="current-plan">'
+    + '<div class="cp-head">'
+    + '<span class="cp-label">Current plan</span>'
+    + '<span class="cp-name">' + escapeHtml(plan.name) + '</span>'
+    + '</div>'
+    + '<div class="cp-meta">' + escapeHtml(allowance)
+    + (plan.price_cents === null || plan.price_cents === undefined
+        ? ' · custom pricing'
+        : ' · $' + (plan.price_cents / 100).toFixed(2) + ' / month')
+    + '</div>'
+    + (pct !== null
+        ? '<div class="cp-usage"><div class="quota-bar">'
+          + '<div class="quota-fill' + (pct >= 80 ? ' warn' : '') + '" style="width:'
+          + pct + '%"></div></div>'
+          + '<span class="cp-usage-text">' + used + ' of ' + cap + ' used this month</span></div>'
+        : '')
+    + '</div>';
 }
 
 function renderPlanBox(me){
@@ -491,6 +1024,19 @@ function renderPlanBox(me){
     box.innerHTML = '';
   }
 
+  // Always lead with what the account is actually on. The comparison below can
+  // fail -- the catalogue endpoint hiccups, a plan object is missing a field --
+  // and a blank "Your plan" card reads as a broken page rather than a failed
+  // fetch. The current tier comes from /api/auth/me and does not depend on the
+  // catalogue at all.
+  box.innerHTML += currentPlanSummary(me);
+
+  if (!adminPlans.length){
+    box.innerHTML += '<p class="field-hint">Plan options are unavailable right now. '
+      + 'Please try again shortly.</p>';
+    return;
+  }
+
   const cards = adminPlans.map(p => {
     const current = p.id === me.plan.id;
     return '<div class="plan-option' + (current ? ' current' : '') + '">'
@@ -504,7 +1050,7 @@ function renderPlanBox(me){
       + '</li><li>Audit export' + (p.audit_export ? '' : ' (not included)')
       + '</li></ul>'
       + (current ? ''
-         : '<button class="btn-primary" style="width:100%;" onclick="requestUpgrade('
+         : '<button class="btn-primary" onclick="requestUpgrade('
            + p.id + ')">Request upgrade</button>')
       + '</div>';
   }).join('');
@@ -516,27 +1062,94 @@ function renderPlanBox(me){
 // ---- Admin page ------------------------------------------------------
 
 async function loadAdminPage(){
-  const [analyticsRes, queueRes, usersRes, plansRes] = await Promise.all([
-    authFetch('/api/admin/analytics'),
-    authFetch('/api/admin/upgrade-requests'),
-    authFetch('/api/admin/users?limit=100'),
-    authFetch('/api/admin/plans')
-  ]);
-  // A clinician reaching this view is expected, not an error to shout about.
-  if (analyticsRes.status === 403 || queueRes.status === 403){
-    adminMessage('Admin role required. This account cannot reach the dashboard.', true);
+  // Four calls, one of which aggregates over the usage table. On a cold Neon
+  // compute start this is the slowest screen in the app, so every region gets a
+  // placeholder shaped like the content that is coming.
+  const seq = ++loadSeq;
+  startLoadBar();
+  const settle = showSkeletons({
+    statRow: '<div class="skeleton skeleton-card"></div>'.repeat(4),
+    usageChart: '<div class="skeleton skeleton-block"></div>',
+    upgradeQueue: '<div class="skeleton skeleton-row">' + SKELETON_LINES + '</div>'.repeat(2),
+    adminPlanCards: '<div class="skeleton skeleton-card"></div>'.repeat(3),
+    adminUserBody: '<tr><td colspan="4">'
+      + '<div class="skeleton skeleton-line medium"></div></td></tr>'.repeat(4)
+  });
+
+  try {
+    const [analyticsRes, queueRes, usersRes, plansRes] = await Promise.all([
+      authFetch('/api/admin/analytics'),
+      authFetch('/api/admin/upgrade-requests'),
+      authFetch('/api/admin/users?limit=100'),
+      authFetch('/api/admin/plans')
+    ]);
+    // A clinician reaching this view is expected, not an error to shout about.
+    if (analyticsRes.status === 403 || queueRes.status === 403){
+      adminMessage('Admin role required. This account cannot reach the dashboard.', true);
+      clearAdminSkeletons();
+      return;
+    }
+    const failed = [
+      ['analytics', analyticsRes], ['upgrade requests', queueRes],
+      ['accounts', usersRes], ['plans', plansRes]
+    ].filter(([, r]) => !r.ok).map(([label, r]) => `${label} (${r.status})`);
+    if (failed.length){
+      // Previously this returned silently, leaving a blank dashboard with no
+      // explanation at all.
+      adminMessage('Could not load the dashboard: ' + failed.join(', ')
+        + '. Please retry.', true);
+      clearAdminSkeletons();
+      return;
+    }
+
+    const analytics = await analyticsRes.json();
+    const queue = await queueRes.json();
+    const plans = (await plansRes.json()).plans;
+    const users = (await usersRes.json()).users;
+
+    // The user may have navigated away while these were in flight.
+    if (seq !== loadSeq) return;
+    await wait(settle);
+
+    renderStats(analytics);
+    renderChart(analytics.daily_usage);
+    renderQueue(queue);
+    adminPlans = plans;
+    renderPlanCards(adminPlans);
+    renderAdminUsers(users);
+    adminMessage('');
+  } catch (err){
+    if (seq !== loadSeq) return;
+    adminMessage('Could not load the dashboard: ' + err.message, true);
+    clearAdminSkeletons();
+  } finally {
+    if (seq === loadSeq) stopLoadBar();
+  }
+}
+
+function clearAdminSkeletons(){
+  ['statRow', 'usageChart', 'upgradeQueue', 'adminPlanCards', 'adminUserBody']
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
+}
+
+// Lightweight refresh of just the accounts table.
+//
+// The plan/active controls call this to snap their own UI back to the stored
+// value after a change. It used to be called `loadAdminPanel`, which was never
+// defined -- so every plan change and every activate/deactivate threw a
+// ReferenceError and left the table showing the value that had just been
+// rejected. Reloading only this table also avoids flashing the whole dashboard's
+// skeletons for a one-row edit.
+async function loadAdminPanel(){
+  const res = await authFetch('/api/admin/users?limit=100');
+  if (!res.ok){
+    adminMessage('Could not refresh the account list.', true);
     return;
   }
-  if (!analyticsRes.ok || !queueRes.ok || !usersRes.ok || !plansRes.ok) return;
-
-  const analytics = await analyticsRes.json();
-  renderStats(analytics);
-  renderChart(analytics.daily_usage);
-  renderQueue(await queueRes.json());
-  adminPlans = (await plansRes.json()).plans;
-  renderPlanCards(adminPlans);
-  renderAdminUsers((await usersRes.json()).users);
-  adminMessage('');
+  renderAdminUsers((await res.json()).users);
 }
 
 function adminMessage(text, isError){
@@ -590,11 +1203,23 @@ function renderQueue(body){
       ? '<div class="queue-actions">'
         + '<button class="admin-btn" onclick="decideUpgrade(' + r.id
         + ',\'contacted\')">Mark contacted</button>'
-        + '<button class="admin-btn" onclick="decideUpgrade(' + r.id
+        + '<button class="admin-btn primary" onclick="decideUpgrade(' + r.id
         + ',\'approved\')">Approve</button>'
-        + '<button class="admin-btn" onclick="decideUpgrade(' + r.id
+        + '<button class="admin-btn danger" onclick="decideUpgrade(' + r.id
         + ',\'declined\')">Decline</button></div>'
       : '';
+    // The justification is the reason this queue exists, so it is given the
+    // strongest visual weight on the card. Requests raised before the field
+    // became required have none; say so rather than showing an empty block.
+    const justification = r.note
+      ? '<div class="justification"><p class="justification-label">'
+        + 'Why they need it</p>'
+        + '<p class="justification-text">' + escapeHtml(r.note) + '</p></div>'
+      : '<div class="justification missing"><p class="justification-label">'
+        + 'Why they need it</p>'
+        + '<p class="justification-text">No justification was recorded for this '
+        + 'request.</p></div>';
+
     return '<div class="queue"><div class="queue-head"><div>'
       + '<div class="queue-who">' + escapeHtml(r.username) + ' &rarr; '
       + escapeHtml(r.target_plan) + '</div>'
@@ -602,20 +1227,74 @@ function renderQueue(body){
       + escapeHtml(r.current_plan) + '</div></div>'
       + '<span class="status-pill ' + escapeHtml(r.status) + '">'
       + escapeHtml(r.status) + '</span></div>'
-      + (r.note ? '<div class="queue-note">' + escapeHtml(r.note) + '</div>' : '')
+      + justification
       + (r.admin_note ? '<div class="queue-admin-note">'
-                       + escapeHtml(r.admin_note) + '</div>' : '')
+        + '<span class="queue-admin-note-label">Your note</span>'
+        + escapeHtml(r.admin_note) + '</div>' : '')
       + actions + '</div>';
   }).join('');
 }
 
+const UPGRADE_DECISIONS = {
+  contacted: {
+    label: 'Mark as contacted',
+    verb: 'Mark contacted',
+    blurb: 'Records that you reached out to the requester. The request stays open '
+      + 'and they can see your note.',
+    confirmLabel: 'Mark contacted',
+    danger: false,
+    noteLabel: 'What did you tell them? (optional)',
+    noteHint: 'Shown to the requester.',
+    required: false,
+  },
+  approved: {
+    label: 'Approve',
+    verb: 'Approve this upgrade',
+    blurb: 'This moves the requester onto the new plan immediately and closes the '
+      + 'request. It cannot be undone from this screen.',
+    confirmLabel: 'Approve upgrade',
+    danger: false,
+    noteLabel: 'Note for the requester (optional)',
+    noteHint: 'Shown to the requester alongside the new plan.',
+    required: false,
+  },
+  declined: {
+    label: 'Decline',
+    verb: 'Decline this upgrade',
+    blurb: 'The requester stays on their current plan. They can read your note, so '
+      + 'saying why is worth the effort.',
+    confirmLabel: 'Decline request',
+    danger: true,
+    noteLabel: 'Reason for declining (optional)',
+    noteHint: 'Shown to the requester. Explaining the decision saves a follow-up email.',
+    required: false,
+  },
+};
+
 async function decideUpgrade(id, status){
-  const note = window.prompt('Optional note for the user:', '');
-  if (note === null) return;
+  const spec = UPGRADE_DECISIONS[status];
+  if (!spec) return;
+
+  const answer = await askConfirm({
+    title: spec.verb + '?',
+    message: spec.blurb,
+    confirmLabel: spec.confirmLabel,
+    danger: spec.danger,
+    note: {
+      label: spec.noteLabel,
+      placeholder: status === 'declined'
+        ? 'e.g. Budget is committed to Q3. Re-request once the new quarter opens.'
+        : '',
+      hint: spec.noteHint,
+      required: spec.required
+    }
+  });
+  if (!answer.confirmed) return;
+
   const res = await authFetch('/api/admin/upgrade-requests/' + id, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ status, admin_note: note || null })
+    body: JSON.stringify({ status, admin_note: answer.note })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok){
@@ -628,16 +1307,33 @@ async function decideUpgrade(id, status){
 
 
 async function saveProfile(){
-  setMsg('pfMsg', 'Saving…');
   const body = { full_name: document.getElementById('pfFullName').value };
   const email = document.getElementById('pfEmail').value.trim();
   const currentPw = document.getElementById('pfCurrentPw').value;
   // The API demands the current password for an email change; sending it only
   // when the address actually changed keeps a cosmetic save frictionless.
-  if (email && email !== (currentUser && currentUser.user.email)){
+  const emailChanged = email && email !== (currentUser && currentUser.user.email);
+  if (emailChanged){
     body.email = email;
     if (currentPw) body.current_password = currentPw;
   }
+
+  // An email change is the one profile edit with consequences beyond this page:
+  // it moves the sign-in identifier and the password-recovery address, and the
+  // old one stops working immediately.
+  if (emailChanged){
+    const answer = await askConfirm({
+      title: 'Change your email address?',
+      message: 'You will sign in with ' + email + ' from now on, and password '
+        + 'recovery codes will be sent there. Your current address stops working '
+        + 'for both straight away.',
+      confirmLabel: 'Change email',
+      danger: true,
+    });
+    if (!answer.confirmed) return;
+  }
+
+  setMsg('pfMsg', 'Saving…');
   try {
     const res = await authFetch('/api/auth/me', {
       method: 'PATCH',
@@ -656,15 +1352,26 @@ async function saveProfile(){
 }
 
 async function changeOwnPassword(){
+  const oldPw = document.getElementById('pfOldPw').value;
+  const newPw = document.getElementById('pfNewPw').value;
+  if (!oldPw || !newPw){
+    setMsg('pwMsg', 'Enter both your current and your new password.', 'err');
+    return;
+  }
+  const answer = await askConfirm({
+    title: 'Change your password?',
+    message: 'Your current password stops working immediately. If you are signed '
+      + 'in anywhere else, you will need the new password there.',
+    confirmLabel: 'Change password',
+  });
+  if (!answer.confirmed) return;
+
   setMsg('pwMsg', 'Changing…');
   try {
     const res = await authFetch('/api/auth/change-password', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        current_password: document.getElementById('pfOldPw').value,
-        new_password: document.getElementById('pfNewPw').value
-      })
+      body: JSON.stringify({ current_password: oldPw, new_password: newPw })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(describeAuthError(data, 'Could not change your password.'));
@@ -685,23 +1392,47 @@ async function loadMyUpgradeRequests(){
 
 async function requestUpgrade(planId){
   const plan = adminPlans.find(p => p.id === planId);
-  const note = window.prompt(
-    'Tell the administrator why you need ' + (plan ? plan.name : 'this plan') +
-    ' (optional):', '');
-  if (note === null) return;
+  const name = plan ? plan.name : 'this plan';
+  const limit = plan
+    ? (plan.is_unlimited ? 'unlimited queries' : (plan.monthly_query_limit + ' queries a month'))
+    : '';
+
+  const answer = await askConfirm({
+    title: 'Request the ' + name + ' plan',
+    message: 'An administrator reviews every upgrade request and records a decision. '
+      + 'Your current plan and quota stay active while you wait'
+      + (limit ? ' (' + limit + ' is what you are asking for).' : '.'),
+    confirmLabel: 'Send request',
+    note: {
+      label: 'Why do you need this plan?',
+      placeholder: 'e.g. We screen 60 BRCA variants a week and have run out of the '
+        + '10 monthly queries. LLM-assisted reasoning is needed for the ambiguous '
+        + 'cases the rules cannot classify on their own.',
+      hint: 'The administrator reads this to make their decision, so be specific.',
+      required: true,
+      minLength: 10,
+    }
+  });
+  if (!answer.confirmed) return;
+
   const res = await authFetch('/api/upgrade-requests', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ target_plan_id: planId, note: note || null })
+    body: JSON.stringify({ target_plan_id: planId, note: answer.note })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok){
-    alert(describeAuthError(data, 'Could not submit the request.'));
+    await askConfirm({
+      title: 'Could not send the request',
+      message: describeAuthError(data, 'Please try again.'),
+      confirmLabel: 'Close'
+    });
     return;
   }
   await loadMyUpgradeRequests();
   await loadProfile();
-  await refreshSession();
+  // loadProfile() has already shown the loading bar for this screen.
+  await refreshSession({ silent: true });
 }
 
 function escapeHtml(s){
@@ -750,6 +1481,16 @@ async function saveReview(){
     document.getElementById('error').textContent = 'Enter a reviewer name and review date to save sign-off.';
     return;
   }
+  // A sign-off is an attestation about patient-relevant output, so it gets an
+  // explicit confirmation that names who is being recorded as the reviewer.
+  const answer = await askConfirm({
+    title: 'Record this sign-off?',
+    message: 'This records ' + reviewer + ' as having reviewed '
+      + latestResult.variant_id + ' on ' + reviewDate
+      + '. It is stored with your account and timestamped in the audit register.',
+    confirmLabel: 'Record sign-off',
+  });
+  if (!answer.confirmed) return;
   try {
     // Sign-offs are stored in PostgreSQL behind the account layer, so this call
     // needs the bearer token just like /api/classify.
@@ -815,7 +1556,7 @@ function copyReport(){
 async function classifyVariant(){
   const query = document.getElementById('query').value.trim();
   if (!query){ return; }
-  if (!getToken()){
+  if (!hasSession()){
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = 'Sign in to run a variant analysis.';
     return;
@@ -850,8 +1591,9 @@ async function classifyVariant(){
 
     latestResult = data;
     renderResult(data);
-    // Refresh the quota bar from the entitlement block on the response.
-    refreshSession();
+    // Refresh the quota bar from the entitlement block on the response. Silent:
+    // the result is already on screen and a progress bar would be noise.
+    refreshSession({ silent: true });
   } catch (err) {
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = err.message || 'Something went wrong.';

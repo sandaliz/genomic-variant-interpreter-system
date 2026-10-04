@@ -32,36 +32,76 @@ def user(db_session):
 
 
 class TestLoginByEmail:
-    def test_login_with_username(self, client, user):
-        response = client.post("/api/auth/login",
-                               json={"username": "alice", "password": PASSWORD})
-        assert response.status_code == 200, response.text
+    """
+    Email is the sole login identifier. Username remains a unique display handle
+    but is deliberately not a credential.
+    """
 
     def test_login_with_email(self, client, user):
         response = client.post("/api/auth/login",
-                               json={"username": "alice@example.com",
+                               json={"email": "alice@example.com",
                                      "password": PASSWORD})
         assert response.status_code == 200, response.text
         assert response.json()["user"]["username"] == "alice"
 
-    def test_email_login_is_case_insensitive(self, client, user):
+    def test_login_with_the_username_is_refused(self, client, user):
+        """
+        The handle is not a credential. If it were, anyone who guessed or
+        harvested a username could attempt a sign-in against that account, and
+        two ways of naming one account is two ways of getting it wrong.
+        """
         response = client.post("/api/auth/login",
-                               json={"username": "ALICE@Example.COM",
+                               json={"email": "alice", "password": PASSWORD})
+        assert response.status_code == 422, response.text  # not a valid address
+
+    def test_a_username_shaped_like_an_address_still_cannot_sign_in(
+            self, client, db_session):
+        """
+        The old implementation matched username OR email in one query, explicitly
+        so "a username that happens to look like an email still works". That is
+        exactly the ambiguity worth removing: the handle is not a credential, and
+        only the registered address reaches the password check.
+        """
+        make_user(db_session, username="decoy@example.org",
+                  email="really@example.com")
+        response = client.post(
+            "/api/auth/login",
+            json={"email": "decoy@example.org", "password": "correct-horse-battery"},
+        )
+        assert response.status_code == 401
+
+    def test_the_same_user_signs_in_through_their_real_address(
+            self, client, db_session):
+        """The control: the account works, just not via its handle."""
+        make_user(db_session, username="decoy@example.org",
+                  email="really@example.com")
+        ok = client.post(
+            "/api/auth/login",
+            json={"email": "really@example.com",
+                  "password": "correct-horse-battery"},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["user"]["username"] == "decoy@example.org"
+
+    def test_email_login_is_case_insensitive(self, client, user):
+        """Addresses are case-insensitive in practice; storage is lower-cased."""
+        response = client.post("/api/auth/login",
+                               json={"email": "ALICE@Example.COM",
                                      "password": PASSWORD})
         assert response.status_code == 200, response.text
 
     def test_wrong_password_with_email_is_401(self, client, user):
         response = client.post("/api/auth/login",
-                               json={"username": "alice@example.com",
+                               json={"email": "alice@example.com",
                                      "password": "nope"})
         assert response.status_code == 401
 
     def test_unknown_identifier_is_401_with_the_same_message(self, client, user):
         unknown = client.post("/api/auth/login",
-                              json={"username": "nobody@example.com",
+                              json={"email": "nobody@example.com",
                                     "password": PASSWORD})
         wrong = client.post("/api/auth/login",
-                            json={"username": "alice", "password": "nope"})
+                            json={"email": "alice@example.com", "password": "nope"})
         assert unknown.status_code == wrong.status_code == 401
         assert unknown.json()["detail"] == wrong.json()["detail"]
 
@@ -142,10 +182,10 @@ class TestResetConfirm:
 
         # The new password works, the old one does not.
         assert client.post("/api/auth/login",
-                           json={"username": "alice",
+                           json={"email": "alice@example.com",
                                  "password": NEW_PASSWORD}).status_code == 200
         assert client.post("/api/auth/login",
-                           json={"username": "alice",
+                           json={"email": "alice@example.com",
                                  "password": PASSWORD}).status_code == 401
 
     def test_code_is_single_use(self, client, user):

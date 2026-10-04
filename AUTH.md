@@ -148,12 +148,58 @@ Two rules the module enforces:
   emails.
 
 ### Tokens
-- HS256 JWT, `sub` = user id, plus `username`, `role`, `iat`, `exp`.
+Signed **then** encrypted (JWE, `dir` + A256GCM wrapping a nested HS256 JWS), so
+the token is an opaque 5-part compact string rather than a readable JWT.
+
+```
+eyJhbGciOiAiZGlyIiwiZW5jIjoiQTI1NkdDTSIsImN0eSI6IkpXVCJ9..gGkS...ivzY1...iGNG
+└──────── JWE header ────────┘              └ encrypted payload ┘  └ tag ┘
+                    └ encrypted nested JWS (the signed claims) ┘
+```
+
+- `sub` = user id, plus `username`, `role`, `iat`, `exp`.
+- **`iss` and `aud` are required.** A token minted for another system, or by
+  another system, is rejected before the signature is even considered.
 - Default lifetime 60 minutes (`JWT_EXPIRE_MINUTES`).
-- **No sensitive claims**: no email, no plan, no password material.
-- `JWT_SECRET_KEY` falls back to a clearly-labelled development constant if
-  unset, and `auth.security.USING_DEV_SECRET` reports that fact. Always set a
-  real secret in a deployment.
+- **No sensitive claims**: no email, no plan, no password material. Encryption
+  is defence in depth here, not a licence to put secrets in the payload.
+- The signing key and the encryption key are separate settings, so leaking the
+  encryption key cannot be used to forge a signature.
+- **Missing or default keys fail at import.** A development constant is used only
+  when `JWT_ALLOW_DEV_SECRET=true`, and `auth.security.USING_DEV_SECRET` reports
+  that fact. In any other case the process refuses to start rather than issuing
+  tokens anyone can forge.
+
+### Browser sessions: HttpOnly cookie + CSRF
+A browser used to hold its token in `localStorage`, which any XSS bug could read
+out. The token now goes into an `HttpOnly` cookie, which script cannot touch.
+
+| Cookie | `HttpOnly` | Purpose |
+|---|---|---|
+| `variantlens_session` | **yes** | the token itself — unreadable by JavaScript |
+| `variantlens_csrf` | no | the double-submit half the client echoes back |
+
+Cookies are `Secure`, `SameSite=lax`, `Path=/`, and expire with the token.
+
+Ambience is exactly what makes cookies convenient and exactly what makes them
+CSRFable: the browser attaches the session cookie to a cross-site `PATCH` whether
+or not the page meant to make one. So any **unsafe method authenticated by
+cookie** must present a matching `X-CSRF-Token` header, and is refused with 403
+otherwise. `GET`, `HEAD` and `OPTIONS` are exempt because they do not change
+state.
+
+The CSRF cookie is deliberately readable. That is not a weakness: knowing it is
+useless unless an attacker can also cause the browser to attach the `HttpOnly`
+cookie, which is the thing they cannot do cross-origin.
+
+**Bearer auth is fully supported and never needs a CSRF header**, because a
+bearer token is only ever sent by a client that chose to send it — there is
+nothing ambient for a hostile page to ride. An explicit `Authorization` header
+takes precedence over any cookie present.
+
+Local development runs on plain HTTP, where browsers silently drop a `Secure`
+cookie, so `COOKIE_SECURE=false` is needed for `http://localhost` only. It must
+never be set in production.
 
 ### Identity is re-read on every request
 `get_current_user()` validates the signature, then loads the `User` row again:
@@ -168,12 +214,40 @@ account keeps working until its token expires. Re-reading means revocation is
 immediate, and the `role` used for authorization always comes from the database —
 putting `role: "admin"` in a token changes nothing.
 
+### Login throttling
+Argon2id makes each guess slow, but it does not cap *how many* guesses are made —
+so an unbounded login endpoint is still a free password oracle. `auth.rate_limit`
+bounds it two ways at once:
+
+- **Per IP**, so one host cannot spray many accounts.
+- **Per account**, so many hosts cannot spray one account.
+
+Five failures inside the window returns 429 and the `Retry-After` grows. A
+successful login clears the account's counter.
+
+> This limiter is **in-process, so its counters are per worker**. Running more
+> than one worker (or more than one container) multiplies the budget by the
+> number of workers. A multi-worker deployment must move this to a shared store
+> such as Redis, or the protection is weaker than it looks.
+
+### The `auth_events` table
+Login, registration, password change and every admin mutation write an
+`AuthEvent` row: `event`, `user_id`, `actor_user_id`, `ip`, `user_agent`,
+`occurred_at`, and a `detail` JSON blob.
+
+- Identifiers (username, email) are stored **hashed, never raw** — enough to
+  correlate events about the same person, without turning the audit log into a
+  second copy of the user table.
+- The `actor` is recorded separately from the `subject` so "admin X changed
+  clinician Y's plan" is answerable without guessing.
+- Schema: migration `0005_auth_events`.
+
 ### Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/auth/register` | none | Create an account (always Free, always `clinician`) |
-| POST | `/api/auth/login` | none | Exchange credentials (username **or** email) for a token |
+| POST | `/api/auth/login` | none | Exchange credentials (**email only**) for a token |
 | POST | `/api/auth/password-reset/request` | none | Issue a 6-digit reset code |
 | POST | `/api/auth/password-reset/confirm` | none | Redeem it, set a new password, sign in |
 | GET | `/api/auth/me` | Bearer | Current account, plan, usage, entitlements |
@@ -183,8 +257,35 @@ putting `role: "admin"` in a token changes nothing.
 | GET | `/api/admin/users` | Bearer + `admin` | Read-only account listing |
 
 Self-registration can never create an admin: the route hard-codes
-`role="clinician"`. Duplicate username or email returns `409`. Unknown user and
-wrong password return the same `401` body so usernames cannot be enumerated.
+`role="clinician"`. Duplicate username or email returns `409`. Unknown address
+and wrong password return the same `401` body so accounts cannot be enumerated.
+
+### Email is the identity
+`username` is a **display handle**, not a credential. It stays unique and
+immutable, but `/api/auth/login` accepts `email` and nothing else — there is no
+`or_(username, email)` fallback, and a handle that happens to be shaped like an
+address will not authenticate.
+
+Two things fall out of that:
+
+- **One account, one name.** Previously anyone who guessed or harvested a
+  username could aim a sign-in attempt at that account. A handle is now public
+  information with no access attached to it.
+- **Recovery and sign-in share an address.** The address that receives a reset
+  code is the same one you sign in with, so there is no second identity to keep
+  consistent.
+
+Addresses are lower-cased on registration, on profile change and on login, so
+`Alice@X.com` reaches the same account as `alice@x.com`.
+
+> **This was a breaking change.** `{"username": ...}` on the login payload is
+> rejected with `422`, and scripted clients must send `{"email": ...}`. The
+> field is validated as an address, so a bare handle fails at the schema rather
+> than silently reaching the password check.
+
+The freed-address hole is *not* closed by this change: a user can still change
+their email, which releases the old address for someone else to register. That
+wants its own fix.
 ---
 
 ## 5. Plans and entitlements
@@ -266,16 +367,41 @@ SQLite has no row-level locks, so the lock is skipped there and the unit tests
 exercise the insert-then-recheck fallback. SQLite's single-writer model still
 serialises those transactions, so the fallback is correct for testing.
 
-### Idempotency
-`usage_records.request_id` is unique, and the API derives it deterministically:
+### Every accepted query is charged
+`usage_records.request_id` is unique, and the API mints a **fresh id per
+request**:
 
 ```python
-request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{current_user.id}:{request.query.strip()}"))
+request_id = str(uuid.uuid4())
 ```
 
-A client retrying the same query therefore matches an existing row, the insert
-collides, and the request is **not charged twice**. Distinct queries are charged
-separately.
+Asking the same question twice costs two queries. There is no text-matching or
+"we already answered this" discount — a cache hit is still a caller query, and
+the unit of work that gets metered is one caller query.
+
+> This replaced a genuinely broken scheme that derived the id as
+> `uuid5(user_id + query_text)`. That conflated "the same request" with "the same
+> words", so repeating a query produced the same id, the insert collided, and the
+> call silently went uncharged. Worse, the id carried no month, so a query paid
+> for once could be repeated **free in every month thereafter**. A Free-plan user
+> could burn their quota on distinct queries and then re-run their favourite one
+> indefinitely.
+
+### Retry-safety, opt-in
+Genuine retries still need handling: a client that times out cannot tell whether
+its request landed, and billing it twice is unfair. Send an explicit key and the
+id becomes deterministic again:
+
+```python
+request_id = str(uuid.uuid5(
+    uuid.NAMESPACE_URL,
+    f"{current_user.id}:{month:%Y-%m}:{request.idempotency_key.strip()}",
+))
+```
+
+The month is part of the derivation, so reusing a key next month is a new charge
+rather than a collision with its own history. Omit the key and every call is
+billed, which is the default and the right default for a quota system.
 
 ### What is charged
 Only an accepted query. A `4xx` rejection (bad query, agent-layer refusal) does
@@ -310,6 +436,12 @@ One account can never be served another account's cached result.
 | `PATCH /api/admin/users/{id}` | Change plan, active state or role |
 | `POST /api/admin/users/{id}/password` | Reset another account's password |
 | `GET /api/reviews` | Register of recorded human sign-offs |
+
+There is also one **non-admin** endpoint used by the profile page:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/plans` | Plan catalogue for any signed-in account, for the plan comparison and upgrade requests on the profile page. Same shape as `/api/admin/plans` minus `subscribers`, which stays admin-only. |
 
 There is **no account creation** endpoint: self-registration already covers that
 path, and an admin-create endpoint would be a way to mint accounts without the
@@ -371,6 +503,13 @@ pending ──> contacted ──> approved   (applies the plan change)
 Rules, enforced in `services/upgrade_service.py` so they hold whichever endpoint
 is called:
 
+- **A justification is required.** `POST /api/upgrade-requests` rejects a missing,
+  null or under-10-character `note`, and `strip_whitespace=True` means ten spaces
+  is not a justification either. This was `Optional[str] = None` and the UI said
+  "(optional)", which left the administrator approving spend with nothing to
+  weigh. The admin queue now renders the reason as the most prominent element on
+  the card; requests raised before this change render an explicit "No
+  justification was recorded" rather than a blank box.
 - **Only paid plans are requestable.** Free is the starting tier, not an upgrade.
 - **You cannot request the plan you are already on.**
 - **One open request per account.** A declined or contacted request still blocks
@@ -426,7 +565,7 @@ Four views, one visible at a time:
 
 | View | Who sees it | What it is |
 |---|---|---|
-| **Landing** | Everyone | What the tool does and four worked examples. **No query bar** — a visitor should understand the product before being asked to sign in |
+| **Landing** | Everyone | Marketing page: hero with a sample report, real dataset figures, the four-agent pipeline, pricing, FAQ. **No query bar** — a visitor should understand the product before being asked to sign in |
 | **Workspace** | Signed-in users | The query rail and the report: retrieval evidence, ACMG-style codes, audit timeline, review sign-off, PDF |
 | **Profile** | Signed-in users | Account details, password change, current tier and an upgrade request form |
 | **Admin** | `role=admin` | Analytics cards, a 30-day query chart, the upgrade queue and account controls |
@@ -455,6 +594,61 @@ The **Admin** link appears in the header only for `role=admin`, and a clinician
 who navigates there directly is refused by `require_admin` on the endpoint. UI
 visibility is a convenience; the server is the control.
 
+### Marketing copy on the landing page
+
+Every figure shown to a visitor is derived from `data/clinvar_labels.csv` or
+from `scripts/seed_plans.py` — the 3,009 records, the BRCA1/BRCA2 split, the
+pathogenic counts, and the three plan tiers. There are no invented testimonials,
+star ratings or user counts, and none should be added: this is an academic
+prototype, and a fabricated trust signal on a clinical tool is a liability rather
+than a selling point. The hero's sample report is labelled as illustrative.
+
+The pricing section mirrors the real plans. No payment is taken anywhere in the
+application; an upgrade is a request that an administrator decides.
+
+### URLs
+
+The four views are one document, so navigation is client-side over
+`history.pushState` and each view owns a real slug:
+
+| URL | View |
+|---|---|
+| `/` | Landing |
+| `/analyse` | Workspace |
+| `/profile` | Profile and plan |
+| `/admin-dashboard` | Admin dashboard |
+
+This means a refresh, a pasted link and the browser back button all land in the
+right place. The server serves `index.html` for exactly these four slugs
+(`FRONTEND_VIEWS` in `api.py`); anything else is a real 404, so a typo in a URL
+fails loudly instead of quietly returning HTML. A test asserts the server's slug
+set and the client's match, because a slug the server serves but the client
+cannot map back would render the landing page with no explanation.
+
+An administrator lands on the dashboard rather than the query surface after
+signing in — the query surface stays one click away in the header. A clinician
+lands on `/analyse`.
+
+### Confirmations
+
+Every consequential action routes through one in-app dialog (`askConfirm()` in
+`app.js`) instead of `window.prompt` / `window.confirm` / `window.alert`. The
+browser versions cannot express a required justification, cannot be styled, and
+read as browser chrome rather than as part of the product. The dialog supports a
+textarea with a live character counter, a destructive variant for irreversible
+actions, and cancels on Escape or a backdrop click.
+
+| Action | Confirmed? | Notes |
+|---|---|---|
+| Sign in / register / reset | busy button only | the modal closes on success, stays open on failure so the error is readable |
+| Request an upgrade | yes | justification **required**, min 10 characters |
+| Approve / decline / mark contacted | yes | decline is styled destructive; all accept an optional note for the requester |
+| Change an account's plan | yes | cancelling restores the select to its stored value |
+| Activate / deactivate an account | yes | deactivation is styled destructive |
+| Change your email | yes | only when the address actually changes; a name-only save is frictionless |
+| Change your password | yes | |
+| Record a clinical sign-off | yes | names the reviewer and the date being attested to |
+
 ## 13. Where the secrets live
 
 There is no container image and no infrastructure-as-code file in this project, so
@@ -465,6 +659,12 @@ there is nowhere for a credential to be baked into by accident:
 - The database connection requires TLS (`sslmode=require`).
 - `pool_pre_ping=True` means a hosted database that scales to zero between
   requests does not surface as a stale-connection error.
+- `get_db()` additionally **retries once** when the connection is severed
+  *mid-query*, which `pool_pre_ping` cannot cover. Neon occasionally drops a
+  connection on wake; before this, that surfaced as a 500 and a blank admin
+  dashboard. The retry is gated by `_is_connection_dead()`, which matches only
+  genuine connection loss — a constraint violation, bad syntax or deadlock is
+  re-raised immediately rather than retried.
 - `requirements-api.txt` pins the runtime dependency set separately from the
   notebook stack, so a server install is lean and auditable.
 
@@ -473,7 +673,7 @@ there is nowhere for a credential to be baked into by accident:
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 324 tests
+python3 -m pytest tests/ -v      # 485 tests
 ```
 
 | File | Tests | Covers |

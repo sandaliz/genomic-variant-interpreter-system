@@ -28,6 +28,7 @@ import os
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,10 +63,58 @@ class Base(DeclarativeBase):
     """Declarative base shared by every ORM model in db/models.py."""
 
 
+def _is_connection_dead(exc: Exception) -> bool:
+    """
+    True only for "the socket/connection went away", never for a query that
+    actually ran and was rejected (constraint violation, bad syntax, deadlock).
+    """
+    # psycopg reports a severed connection as InterfaceError, which SQLAlchemy
+    # re-raises as its own InterfaceError (a sibling of OperationalError, not a
+    # subclass -- so both have to be named here).
+    if exc.__class__.__name__ == "InterfaceError":
+        return True
+    original = getattr(exc, "orig", None)
+    if original is None:
+        return False
+    if original.__class__.__name__ == "InterfaceError":
+        return True
+    text = str(original).lower()
+    return any(marker in text for marker in (
+        "server closed the connection unexpectedly",
+        "connection is closed",
+        "connection already closed",
+        "terminating connection",
+        "could not connect",
+        "connection reset",
+        "broken pipe",
+    ))
+
+
 def get_db():
-    """FastAPI dependency that yields a session and always closes it."""
+    """
+    FastAPI dependency that yields a session and always closes it.
+
+    pool_pre_ping only guards the *checkout*: if the server drops the connection
+    while a statement is already in flight, the caller still sees an
+    OperationalError and the request 500s. Neon suspends an idle compute after a
+    few minutes and occasionally severs a connection on wake, so that window is
+    real rather than theoretical -- it showed up as a blank admin dashboard.
+
+    One retry covers it. The retry is only safe for the failures it targets: a
+    connection that died before doing any work has not changed any rows.
+    """
     db = SessionLocal()
     try:
         yield db
+    except (OperationalError, InterfaceError) as exc:
+        if not _is_connection_dead(exc):
+            raise
+        db.rollback()
+        db.close()
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
     finally:
         db.close()

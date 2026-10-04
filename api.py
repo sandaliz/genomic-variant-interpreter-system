@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from main import VariantInterpretationSystem
 from protocol.security import authenticate, AuthenticationError
+from auth.audit import record
 from auth.dependencies import get_current_user, require_admin
 from auth.schemas import (
     UpgradeDecision,
@@ -53,6 +54,7 @@ from db.models import ALLOWED_ROLES, Plan, ReviewSignoff, UPGRADE_STATUSES, Upgr
 from services.entitlement_service import (
     check_quota,
     entitlements,
+    month_start_utc,
     record_usage,
     usage_this_month,
 )
@@ -199,6 +201,16 @@ class QueryRequest(BaseModel):
             "Authorization: Bearer header."
         ),
     )
+    idempotency_key: Optional[str] = Field(
+        None,
+        max_length=64,
+        description=(
+            "Optional. Send the same key when retrying a request you are not "
+            "sure landed, and the retry is charged once instead of twice. Omit "
+            "it and every accepted call is billed separately, even if the query "
+            "text is identical to a previous one."
+        ),
+    )
 
 
 class FullPipelineResponse(BaseModel):
@@ -327,6 +339,11 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fronten
 # three reviewable files instead of one very long one. Nothing else is exposed.
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
+# URL slug -> view id. Kept beside the route handler so the client and the server
+# agree on what is a real page rather than a typo. One slug per view: a second
+# alias would render a view at a URL the client cannot map back.
+FRONTEND_VIEWS = {"profile", "admin-dashboard", "analyse"}
+
 
 # ------------------------------------------------------------------
 # Routes
@@ -338,6 +355,28 @@ async def root():
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
     return {"message": "Genomic Variant Interpretation API. See /docs for API documentation."}
+
+
+# The frontend is a single document with four views switched by a `hidden`
+# class, so a deep link like /admin-dashboard has to be answered with that same
+# document -- the script then reads window.location.pathname and shows the right
+# view. Without these, refreshing a deep link 404s and the views are
+# unreachable by URL.
+@app.get("/{page}", include_in_schema=False)
+async def frontend_deep_link(page: str):
+    """
+    Serve the single-page frontend for the known view routes.
+
+    Only the four view slugs resolve. Anything else is a genuine 404 rather than
+    the frontend shell, so a typo in an API path still fails loudly instead of
+    quietly returning HTML to something expecting JSON.
+    """
+    slug = page.strip("/").lower()
+    if slug in FRONTEND_VIEWS:
+        frontend_path = os.path.join(FRONTEND_DIR, "index.html")
+        if os.path.exists(frontend_path):
+            return FileResponse(frontend_path)
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/health")
@@ -374,11 +413,22 @@ def classify(
     info = check_quota(db, current_user)
     llm_allowed = bool(info["llm_enabled"])
     system = _system_llm if llm_allowed else _system_rules
-    # Deterministic per-user request key: a retry of the same query by the same
-    # user maps to the same id, so usage is recorded once instead of twice.
-    request_id = str(uuid.uuid5(
-        uuid.NAMESPACE_URL, f"{current_user.id}:{request.query.strip()}"
-    ))
+    # One billable request per accepted call.
+    #
+    # This used to be uuid5(user_id + query text), which conflated "the same
+    # request" with "the same words". Repeating a query was therefore free --
+    # and because UsageRecord.request_id is globally unique with no month in
+    # it, a query could be run once and then repeated free in every month
+    # thereafter. The unique constraint still earns its keep for genuine
+    # retries, so it is kept, but only where the client opts in.
+    if request.idempotency_key and request.idempotency_key.strip():
+        month_key = month_start_utc().strftime("%Y-%m")
+        request_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{current_user.id}:{month_key}:{request.idempotency_key.strip()}",
+        ))
+    else:
+        request_id = str(uuid.uuid4())
 
     # The agent layer keeps its own credential check as defence-in-depth: JWT ran
     # at the edge above, and main.py still refuses untrusted callers.
@@ -932,6 +982,38 @@ def admin_list_plans(
     }
 
 
+@app.get("/api/plans")
+def list_plans(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Plan catalogue for any signed-in account.
+
+    The admin dashboard has its own richer version of this at
+    /api/admin/plans, which additionally exposes subscriber counts. A
+    regular user needs the catalogue too -- otherwise the profile page has
+    nothing to compare their plan against and no way to request an upgrade.
+    """
+    plans = db.scalars(select(Plan).order_by(Plan.id)).all()
+    return {
+        "total": len(plans),
+        "plans": [
+            {
+                "id": plan.id,
+                "name": plan.name,
+                "price_cents": plan.price_cents,
+                "monthly_query_limit": plan.monthly_query_limit,
+                "is_unlimited": plan.is_unlimited,
+                "llm_enabled": plan.llm_enabled,
+                "api_access": plan.api_access,
+                "audit_export": plan.audit_export,
+            }
+            for plan in plans
+        ],
+    }
+
+
 @app.patch("/api/admin/users/{user_id}")
 def admin_update_user(
     user_id: int,
@@ -979,6 +1061,10 @@ def admin_update_user(
             status_code=400,
             detail="An administrator cannot change their own role or active state.")
 
+    previous_plan_id = target.plan_id
+    previous_is_active = target.is_active
+    previous_role = target.role
+
     if body.plan_id is not None:
         plan = db.get(Plan, body.plan_id)
         if plan is None:
@@ -991,6 +1077,21 @@ def admin_update_user(
 
     db.commit()
     db.refresh(target)
+
+    # One event per attribute that actually changed. Recording all three
+    # unconditionally would bury the real change in noise, and recording none
+    # would make a privilege escalation indistinguishable from a no-op call.
+    if body.plan_id is not None and target.plan_id != previous_plan_id:
+        record(db, "plan_changed", user_id=target.id, actor_user_id=current_user.id,
+               detail=f"{previous_plan_id} -> {target.plan_id}")
+    if body.is_active is not None and target.is_active != previous_is_active:
+        record(db, "account_activated" if target.is_active
+               else "account_deactivated",
+               user_id=target.id, actor_user_id=current_user.id)
+    if body.role is not None and target.role != previous_role:
+        record(db, "role_changed", user_id=target.id, actor_user_id=current_user.id,
+               detail=f"{previous_role} -> {target.role}")
+
     return {"user": _admin_user_payload(db, target)}
 
 
@@ -1013,6 +1114,8 @@ def admin_reset_password(
         raise HTTPException(status_code=404, detail="Account not found.")
     target.password_hash = hash_password(body.new_password)
     db.commit()
+    record(db, "admin_password_reset", user_id=target.id,
+           actor_user_id=current_user.id)
     # The response deliberately says nothing beyond the outcome: never echo the
     # new password, and never return the hash.
     return {"reset": True, "username": target.username}

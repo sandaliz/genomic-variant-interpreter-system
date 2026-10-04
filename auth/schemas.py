@@ -4,9 +4,9 @@ auth/schemas.py
 Pydantic v2 request/response contracts for the account layer.
 """
 
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
 
 
 class RegisterRequest(BaseModel):
@@ -16,9 +16,11 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    # Accepts a username OR an email address; the route resolves both.
-    username: str = Field(min_length=1, max_length=255,
-                          description="Username or email address")
+    # Email is the sole login identity. Username stays a unique, immutable display
+    # handle but is no longer a credential: two accounts can never be split by
+    # guessing a handle, and the address that owns password recovery is the same
+    # one you sign in with.
+    email: EmailStr
     password: str = Field(min_length=1, max_length=128)
 
 
@@ -93,6 +95,7 @@ class MeResponse(BaseModel):
     # so the UI can sign the user in without a second round-trip.
     access_token: Optional[str] = None
     expires_in: Optional[int] = None
+    csrf_token: Optional[str] = None
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -137,14 +140,34 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserOut
+    # Echoed so the client can put it in the X-CSRF-Token header without having to
+    # parse the readable cookie first. The session token itself also travels in an
+    # HttpOnly cookie, so a browser never has to hold it in script.
+    csrf_token: Optional[str] = None
 
 
 # ------------------------------------------------------------------
 # Upgrade requests
 # ------------------------------------------------------------------
 class UpgradeRequestCreate(BaseModel):
+    """
+    A request to move to a paid plan.
+
+    The justification is required. It used to be `Optional[str] = None`, and the
+    UI labelled it "(optional)" -- which meant the administrator was asked to
+    approve a spend with no stated reason to weigh, and routinely had nothing to
+    read. The whole point of this hand-off is that a human decides, so the human
+    gets the reason.
+
+    strip_whitespace matters here: without it `min_length=10` counts the padding,
+    so a justification of ten spaces satisfies the field and the administrator
+    gets an empty box to read.
+    """
     target_plan_id: int
-    note: Optional[str] = Field(default=None, max_length=500)
+    note: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=10, max_length=500),
+    ] = Field(description="Why this plan is needed. Shown to the administrator deciding.")
 
 
 class UpgradeRequestOut(BaseModel):

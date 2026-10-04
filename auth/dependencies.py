@@ -1,31 +1,43 @@
 """
 auth/dependencies.py
 
-FastAPI dependencies that turn a Bearer token into an authenticated User row.
+FastAPI dependencies that turn a Bearer token or session cookie into an
+authenticated User row.
 
 Re-reading the row on every request (instead of trusting token contents) means a
 deactivated account loses access immediately, even with an unexpired token.
+
+A request may authenticate two ways:
+
+  * ``Authorization: Bearer <token>`` -- used by the test suite, curl and any
+    scripted integration. Not ambient, so no CSRF check applies.
+  * the HttpOnly session cookie -- used by the browser, where a token in
+    localStorage would be readable by any injected script. Ambient, so a CSRF
+    token is required (see auth/cookies.py).
 """
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from auth.cookies import require_csrf, token_from_request
 from auth.security import TokenError, decode_access_token
 from db.database import get_db
 from db.models import User
 
-_bearer = HTTPBearer(auto_error=False)
 
-
-def bearer_token(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
-) -> str:
-    if credentials is None or not credentials.credentials:
-        detail = "Missing Authorization: Bearer <token> header."
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
-    return credentials.credentials
+def bearer_token(request: Request) -> str:
+    """
+    Pull the token off the request, enforcing CSRF where it applies.
+    """
+    token, by_cookie = token_from_request(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization: Bearer <token> header or session cookie.",
+        )
+    require_csrf(request, by_cookie)
+    return token
 
 
 def get_current_user(

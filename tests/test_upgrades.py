@@ -40,10 +40,60 @@ def as_admin(token_for, admin):
     return token_for("root")
 
 
-def _request(client, plan_id, headers, note=None):
+def _request(client, plan_id, headers, note="We evaluate 300 variants a month"):
+    # The justification is required (it was Optional until this was fixed), so the
+    # default here is a real sentence rather than None.
     return client.post("/api/upgrade-requests",
                        json={"target_plan_id": plan_id, "note": note},
                        headers=headers)
+
+
+class TestJustificationIsRequired:
+    """
+    The note used to be `Optional[str] = None` and the UI labelled it
+    "(optional)", which left the administrator approving spend with nothing to
+    weigh. The whole point of this hand-off is that a human decides, so the
+    human gets the reason.
+    """
+
+    def test_missing_note_is_rejected(self, client, plans, clinician, login):
+        response = client.post("/api/upgrade-requests",
+                               json={"target_plan_id": plans["pro"].id},
+                               headers=login())
+        assert response.status_code == 422
+
+    def test_null_note_is_rejected(self, client, plans, clinician, login):
+        response = _request(client, plans["pro"].id, login(), note=None)
+        assert response.status_code == 422
+
+    def test_too_short_is_rejected(self, client, plans, clinician, login):
+        response = _request(client, plans["pro"].id, login(), note="cheaper")
+        assert response.status_code == 422
+
+    def test_too_long_is_rejected(self, client, plans, clinician, login):
+        response = _request(client, plans["pro"].id, login(), note="x" * 501)
+        assert response.status_code == 422
+
+    def test_a_real_sentence_is_accepted(self, client, plans, clinician, login):
+        response = _request(client, plans["pro"].id, login(),
+                            note="We exceed the 10 monthly queries most weeks.")
+        assert response.status_code == 201, response.text
+        assert response.json()["note"].startswith("We exceed")
+
+    def test_whitespace_only_does_not_satisfy_the_minimum(self, client, plans,
+                                                          clinician, login):
+        # Long enough to clear a naive min_length, but it is not a justification.
+        # strip_whitespace is what stops ten spaces from being an answer.
+        for blank in ("     ", "          ", "\t\t\t\t\t\t\n"):
+            response = _request(client, plans["pro"].id, login(), note=blank)
+            assert response.status_code == 422, repr(blank)
+
+    def test_surrounding_whitespace_is_trimmed_before_storage(self, client, plans,
+                                                              clinician, login):
+        response = _request(client, plans["pro"].id, login(),
+                            note="   We need more monthly volume.   ")
+        assert response.status_code == 201, response.text
+        assert response.json()["note"] == "We need more monthly volume."
 
 
 class TestCreateRequest:
@@ -76,14 +126,16 @@ class TestCreateRequest:
                                                login):
         make_user(db_session, username="pro_user", plan=plans["pro"])
         response = client.post("/api/upgrade-requests",
-                               json={"target_plan_id": plans["pro"].id},
+                               json={"target_plan_id": plans["pro"].id,
+                                     "note": "Want more monthly volume"},
                                headers=login("pro_user"))
         assert response.status_code == 409
         assert "already on" in response.json()["detail"].lower()
 
     def test_unknown_plan_is_404(self, client, clinician, login):
         assert client.post("/api/upgrade-requests",
-                           json={"target_plan_id": 9999},
+                           json={"target_plan_id": 9999,
+                                 "note": "We need more volume than Free allows"},
                            headers=login()).status_code == 404
 
     def test_one_open_request_at_a_time(self, client, plans, clinician, login):
@@ -92,10 +144,11 @@ class TestCreateRequest:
         assert second.status_code == 409
 class TestMyRequests:
     def test_lists_this_accounts_requests(self, client, plans, clinician, login):
-        _request(client, plans["pro"].id, login(), note="first")
+        _request(client, plans["pro"].id, login(),
+                 note="First request: we need more monthly volume")
         body = client.get("/api/upgrade-requests/mine", headers=login()).json()
         assert body["total"] == 1
-        assert body["requests"][0]["note"] == "first"
+        assert body["requests"][0]["note"] == "First request: we need more monthly volume"
 
     def test_does_not_leak_other_accounts(self, client, plans, clinician, admin,
                                           login):
@@ -118,7 +171,8 @@ class TestAdminQueue:
 
     def test_includes_requester_contact_details(self, client, plans, clinician, admin,
                                                 login):
-        _request(client, plans["pro"].id, login(), note="need more volume")
+        _request(client, plans["pro"].id, login(),
+                 note="We need more volume than the Free plan allows")
         body = client.get("/api/admin/upgrade-requests",
                           headers=login("root")).json()
         row = body["requests"][0]

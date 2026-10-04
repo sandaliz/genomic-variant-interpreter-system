@@ -6,11 +6,27 @@ The four agents are stubbed out: these tests are about who may call
 (covered by the agent test modules).
 """
 
+from datetime import timedelta
+import uuid
+
 import pytest
 
 from db.models import UsageRecord, User
-from services.entitlement_service import usage_this_month
+from services.entitlement_service import month_start_utc, usage_this_month
 from conftest import make_plan, make_user
+
+
+def _record_last_month(db_session, user_id):
+    """
+    Insert a usage row dated inside the previous UTC month.
+
+    usage_this_month() only counts rows from month_start_utc() onwards, so this
+    proves a later month charges again rather than inheriting an older id.
+    """
+    row = UsageRecord(user_id=user_id, request_id="prior-month-row", query_count=1)
+    row.created_at = month_start_utc() - timedelta(days=1)
+    db_session.add(row)
+    db_session.commit()
 
 
 class _StubSystem:
@@ -136,13 +152,84 @@ class TestClassifyQuota:
         assert client.post("/api/classify", json=QUERY, headers=login()).status_code == 200
         assert usage_this_month(db_session, login_user_id(client, login())) == 1
 
-    def test_repeated_identical_query_is_charged_once(self, client, stub_systems,
-                                                      free_user, login, db_session):
-        # Deterministic request id => a client retry must not burn quota twice.
+    def test_repeating_the_same_query_is_charged_every_time(
+            self, client, stub_systems, free_user, login, db_session):
+        """
+        Regression: request_id used to be uuid5(user_id + query text), so asking
+        the same question again produced the same id, hit the unique constraint
+        and was silently not charged. Three identical calls cost one.
+        """
         for _ in range(3):
             assert client.post("/api/classify", json=QUERY,
                                headers=login()).status_code == 200
+        assert usage_this_month(db_session, login_user_id(client, login())) == 3
+
+    def test_repeating_a_query_does_not_get_free_forever_across_months(
+            self, client, stub_systems, free_user, login, db_session):
+        """
+        The old id was uuid5(user_id + query) with no month in it, so it collided
+        with the identical query run in a previous month and went uncharged. With
+        the row already there, this month's call must still be counted: 1.
+        """
+        user_id = login_user_id(client, login())
+        _record_last_month(db_session, user_id)
+        assert usage_this_month(db_session, user_id) == 0  # last month only
+        assert client.post("/api/classify", json=QUERY,
+                           headers=login()).status_code == 200
+        assert usage_this_month(db_session, user_id) == 1
+
+    def test_an_idempotency_key_still_makes_a_genuine_retry_free(
+            self, client, stub_systems, free_user, login, db_session):
+        """
+        Retry-safety is worth keeping -- a client that cannot tell whether a
+        timed-out request landed should not be billed twice for it. That is what
+        the unique constraint is for, but only where the client opts in.
+        """
+        payload = dict(QUERY, idempotency_key="retry-me")
+        for _ in range(3):
+            assert client.post("/api/classify", json=payload,
+                               headers=login()).status_code == 200
         assert usage_this_month(db_session, login_user_id(client, login())) == 1
+
+    def test_different_idempotency_keys_are_charged_separately(
+            self, client, stub_systems, free_user, login, db_session):
+        for key in ("a", "b", "c"):
+            client.post("/api/classify", json=dict(QUERY, idempotency_key=key),
+                        headers=login())
+        assert usage_this_month(db_session, login_user_id(client, login())) == 3
+
+    def test_an_idempotency_key_is_scoped_to_the_month(
+            self, client, stub_systems, free_user, login, db_session):
+        """
+        The key is folded into the request id together with the UTC month. If the
+        month were left out, reusing a key next month would collide with its own
+        row from the previous month and go uncharged -- the permanent-free bug
+        reached by a different route.
+
+        The planted row carries the id this key *would* have produced last month,
+        so the two calls this month are only charged if the month really is part
+        of the derivation.
+        """
+        user_id = login_user_id(client, login())
+        key = "reused-across-months"
+        last_month = (month_start_utc() - timedelta(days=1)).strftime("%Y-%m")
+        prior = UsageRecord(
+            user_id=user_id,
+            request_id=str(uuid.uuid5(
+                uuid.NAMESPACE_URL, f"{user_id}:{last_month}:{key}")),
+            query_count=1,
+        )
+        prior.created_at = month_start_utc() - timedelta(days=1)
+        db_session.add(prior)
+        db_session.commit()
+
+        payload = dict(QUERY, idempotency_key=key)
+        assert client.post("/api/classify", json=payload,
+                           headers=login()).status_code == 200
+        # Last month's row must not suppress this month's charge. If the month
+        # were absent from the derivation, this id would collide with the planted
+        # row and the call would go uncharged, leaving usage at 0.
+        assert usage_this_month(db_session, user_id) == 1
 
     def test_distinct_queries_are_charged_separately(self, client, stub_systems,
                                                      free_user, login, db_session):

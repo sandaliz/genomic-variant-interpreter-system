@@ -327,10 +327,16 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | Feature | Where | How |
 |---|---|---|
 | **Agent-layer authentication** | `protocol/security.py` | API key hashed with SHA-256; `main.py` refuses an untrusted caller before any agent runs (retained as defence-in-depth behind the JWT layer) |
-| **Account authentication** | `auth/security.py`, `auth/dependencies.py` | Argon2id password hashing; HS256 access tokens (60 min). Sign-in accepts username **or** email. `POST /api/classify`, `/api/trail/*` and `/api/pipeline/*` require `Authorization: Bearer <token>` and return 401 without one. Identity is re-read from PostgreSQL on every request, so deactivation revokes access immediately and the authorization role always comes from the database |
+| **Account authentication** | `auth/security.py`, `auth/dependencies.py` | Argon2id password hashing; 60-minute access tokens. **Email is the sole login identifier** — the username is a display handle and is never accepted as a credential, so there is exactly one name per account and a harvested username cannot be aimed at a sign-in. Addresses are lower-cased on write and on lookup. Identity is re-read from PostgreSQL on every request, so deactivation revokes access immediately and the authorization role always comes from the database, never from the token |
+| **Signed-then-encrypted tokens** | `auth/security.py` | Tokens are a nested JWS inside a JWE (A256GCM), so the wire format is an opaque 5-part compact string rather than a base64-readable JWT that hands an attacker the user id, role and expiry. The inner JWS is still verified, so encryption adds confidentiality without weakening integrity. Signing and encryption use **separate keys**, so leaking one cannot forge the other |
+| **Token binding** | `auth/security.py` | `iss` and `aud` are mandatory claims. A token minted by another system, or for another system, is rejected before its signature is trusted. Missing or default keys **fail at import** rather than silently minting tokens anyone can forge (`JWT_ALLOW_DEV_SECRET=true` is the only escape hatch, and `USING_DEV_SECRET` reports its use) |
+| **HttpOnly session cookie** | `auth/cookies.py`, `frontend/app.js` | The browser session moved out of `localStorage` — readable by any XSS bug — into an `HttpOnly` cookie that script cannot touch. `Secure`, `SameSite=lax`, `Path=/`, expiring with the token |
+| **CSRF defense** | `auth/dependencies.py`, `auth/cookies.py` | Cookie auth is ambient by nature, which is exactly what makes it CSRF-able. Any unsafe method authenticated **by cookie** must present a matching `X-CSRF-Token` header and is refused with 403 otherwise; safe methods are exempt. The CSRF cookie is deliberately readable, which is safe only because an attacker who learns it still cannot make the browser attach the `HttpOnly` cookie cross-origin. Bearer auth is never ambient and needs no CSRF token, so scripted clients are unaffected; an explicit `Authorization` header wins over any cookie |
+| **Login throttling** | `auth/rate_limit.py` | Argon2id slows each guess but does not cap how many are made, so failures are limited **per IP and per account** together — one host cannot spray many accounts, many hosts cannot spray one account. Excess attempts return 429 with a growing `Retry-After`. Counters are in-process, so a multi-worker deployment needs a shared store such as Redis |
+| **Auth audit trail** | `auth/audit.py`, `db/models.py` (`AuthEvent`), migration `0005_auth_events` | Login, registration, password change and every admin mutation write a row with subject and **actor** recorded separately, so "admin X changed clinician Y's plan" is answerable directly. Username/email are stored **hashed**, never raw, so the audit log is not a second copy of the user table |
 | **Role-based access** | `auth/dependencies.py`, `api.py` | `require_admin()` guards `/api/admin/users`, `/api/admin/plans`, `PATCH /api/admin/users/{id}`, password reset and `/api/reviews`; a clinician gets 403. Guards prevent an admin changing their own role/active state, and prevent removing the last active administrator |
 | **Plan feature gating** | `services/entitlement_service.py`, `api.py` | `plan.llm_enabled` selects the LLM or rules-only system instance at request time; Free runs the full four-agent pipeline with rule-based reasoning |
-| **Quota enforcement** | `services/entitlement_service.py` | Per-UTC-month usage rows. Pre-flight `check_quota()` returns 429 before the pipeline runs; `record_usage()` re-checks under a PostgreSQL `SELECT … FOR UPDATE` row lock so concurrent requests cannot overshoot. Deterministic `request_id` keeps client retries from being charged twice |
+| **Quota enforcement** | `services/entitlement_service.py` | Per-UTC-month usage rows. Pre-flight `check_quota()` returns 429 before the pipeline runs; `record_usage()` re-checks under a PostgreSQL `SELECT … FOR UPDATE` row lock so concurrent requests cannot overshoot. **Every accepted query is charged**, including an exact repeat — the request id is a fresh `uuid4()` per call, so asking the same question twice costs twice. Retry-safety is opt-in via an `idempotency_key` (folded together with the user and the UTC month, so reusing a key next month is a new charge rather than a collision) |
 | **Input sanitization** | Intake Agent | Rejects SQL/script injection, over-length input, empty queries |
 | **Prompt-injection defense** | `protocol/security.py` (`is_prompt_injection`) | Regex blocklist for system-prompt overrides ("ignore previous instructions"), exfiltration ("reveal system prompt"), role-hijack and jailbreak phrasing; enforced in `sanitize_query()` before any NLP/LLM sees the query |
 | **Encryption in transit** | `protocol/message.py` | All agent payloads encrypted with Fernet symmetric encryption |
@@ -342,7 +348,7 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Profile integrity** | `auth/routes.py` | Signed-in users may edit `full_name` freely; changing `email` requires the current password because that address is where recovery goes; `username` is immutable because it is the primary identifier baked into issued tokens and the audit trail. Unknown fields are rejected rather than silently ignored |
 | **Operational visibility** | `services/analytics_service.py` | Administrator dashboard figures (accounts, query volume, plan mix, upgrade queue, sign-offs) computed live from the same tables the app writes, so a displayed number cannot drift from the data it describes. The daily series is gap-filled so a quiet day reads as a real dip |
 | **Subscription lifecycle** | `services/upgrade_service.py` | Upgrade hand-off: a user requests a paid plan, an administrator approves/declines/marks contacted. Approval applies the plan change in the same transaction as the decision; decided states are terminal; the requester keeps their working plan and quota while waiting and is notified by email |
-| **Credential isolation** | `.gitignore`, `.env.example` | `.env` is gitignored and `DATABASE_URL` / `JWT_SECRET_KEY` are supplied per developer or per deployment. The project ships no container image and no infrastructure-as-code file, so there is nothing for a credential to be baked into. Database connections require TLS (`sslmode=require`) |
+| **Credential isolation** | `.gitignore`, `.env.example` | `.env` is gitignored and `DATABASE_URL` / `JWT_SECRET_KEY` / `JWT_ENCRYPTION_KEY` are supplied per developer or per deployment. The project ships no container image and no infrastructure-as-code file, so there is nothing for a credential to be baked into. Database connections require TLS (`sslmode=require`) |
 
 ---
 
@@ -483,15 +489,20 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 
 ### 9.3 Unit Tests
 
-```
-75 passed
-```
+**485 passing** across 16 files — 60 covering the agent/pipeline layer and 425
+covering auth, security, entitlements, roles, admin, frontend and review.
 
+**Agent / pipeline (60)**
 - **Intake Agent (13)** — entity extraction, query types, security, rejections, plus prompt-injection override/exfiltration rejection
 - **Evidence Agent (11)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback, plus `coverage_fallback` presence/value tests
- - **Classification Agent (22)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, and 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches)
+- **Classification Agent (22)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, and 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches)
 - **LLM resilience (8)** — bounded SDK retry, 503 → fallback-model chain → `RuntimeError`, classifier and reporter degradation, direction-aware conflict semantics, plus end-to-end 503 cascade (rules + template fallback, encrypted message path)
-- **Security module (21)** — sanitization, auth, encryption, plus prompt-injection override/exfiltration/role-hijack/jailbreak blocking
+- **Cache isolation (6)** — per-user query-cache separation
+
+**Web / auth / product (425)**
+- **Frontend (134)** — static checks over `index.html`/`app.css`/`app.js` plus served-asset checks: page slugs, view routing, email-only sign-in, cookie/CSRF session policy, confirmation-dialog state, the profile skeleton-restoration fix, admin panel loading
+- **Admin (83)** — role gates, plan management, account mutation, login throttling (per-IP and per-account), and the cookie/CSRF session contract
+- **Auth (35)**, **upgrades (32)**, **password reset (25)**, **security (21)**, **profile (20)**, **entitlements (19)**, **analytics (19)**, **review sign-offs (17)**, **classify API (20)**
 
 ### 9.4 Analysis & Visualization Notebook
 
@@ -660,7 +671,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 324 tests (no database required)
+python3 -m pytest tests/ -v    # 485 tests (no database required)
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
 # Evaluation
@@ -683,8 +694,8 @@ This project fulfills all assignment requirements:
 3. ✅ **LLM**: Google Gemini (classification reasoning + report generation)
 4. ✅ **NLP**: Named Entity Recognition (gene, HGVS, position, rsID) + intent classification + extractive/abstractive summarization
 5. ✅ **Information Retrieval**: TF-IDF-based retrieval with cosine similarity (scikit-learn `TfidfVectorizer` + `cosine_similarity`) — filtering, relevance ranking, and ranked top-K evidence selection with explainable scores. (No BM25 implementation is used.)
-6. ✅ **Security**: two-layer authentication (PostgreSQL accounts with Argon2id + JWT at the API edge, SHA-256 agent-layer API keys as defence-in-depth), role-based access control, plan feature gating, monthly quota enforcement with row-locked commit-time re-checks, input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
+6. ✅ **Security**: two-layer authentication (PostgreSQL accounts with Argon2id + JWE signed-then-encrypted tokens at the API edge, SHA-256 agent-layer API keys as defence-in-depth), **email as the sole login identity** (username is a display handle, never a credential), **HttpOnly session cookies with CSRF double-submit protection** (bearer auth kept for scripted clients), **per-IP and per-account login throttling**, a dedicated **`auth_events` audit table** with hashed identifiers and separate actor/subject, mandatory `iss`/`aud` binding and fail-fast JWT configuration, role-based access control, plan feature gating, monthly quota enforcement where **every accepted query is charged** and retry-safety is opt-in via `idempotency_key`, row-locked commit-time re-checks, input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **215 passing unit tests** (75 agent/protocol + 249 auth/entitlement/role/frontend/review)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **485 passing unit tests** (60 agent/pipeline + 425 auth/security/entitlement/role/frontend/review)

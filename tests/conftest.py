@@ -26,6 +26,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # dialled: every test overrides get_db with its own SQLite engine.
 os.environ.setdefault("DATABASE_URL", "postgresql://unused:unused@localhost/unused")
 
+# auth.security refuses to import unless both JWT secrets are configured, which
+# is the point in production. The suite needs its own keys rather than the
+# developer's, so they are set here before the first import.
+os.environ.setdefault("JWT_SECRET_KEY", "test-signing-key-not-a-real-secret")
+os.environ.setdefault("JWT_ENCRYPTION_KEY", "test-encryption-key-not-a-real-secret")
+
+# Cookies default to Secure, and a Secure cookie is dropped over plain HTTP --
+# which is what the test client uses. Opt out for the suite only; production
+# should never set this.
+os.environ.setdefault("COOKIE_SECURE", "false")
+
 # Imported for side effects: db.models must be registered on Base.metadata
 # before create_all() runs, otherwise the tables would not exist.
 from db.database import Base  # noqa: E402
@@ -75,15 +86,22 @@ def make_plan(session, name="Free", limit=3, llm=False, api_access=True,
 
 
 def make_user(session, username="clinician", plan=None, role="clinician",
-              password="correct-horse-battery", is_active=True):
-    """Insert a user row for tests, defaulting to a fresh Free plan."""
+              password="correct-horse-battery", is_active=True, email=None):
+    """
+    Insert a user row for tests, defaulting to a fresh Free plan.
+
+    The address defaults to "<username>@example.com", which is what almost every
+    test wants. Pass email= explicitly when the handle is itself address-shaped
+    and you need the two to differ -- the derived default would not be a valid
+    address in that case.
+    """
     from auth.security import hash_password
 
     if plan is None:
         plan = make_plan(session)
     user = User(
         username=username,
-        email=f"{username}@example.com",
+        email=email if email is not None else f"{username}@example.com",
         password_hash=hash_password(password),
         role=role,
         plan_id=plan.id,
@@ -109,6 +127,21 @@ def plan_named(session, name, **kwargs):
     return make_plan(session, name=name, **kwargs)
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """
+    The sign-in limiter is process-global by design, which means its counters
+    survive between tests and a suite that logs in repeatedly with the same
+    username would start failing with 429 for no real reason. Clearing the
+    buckets between tests keeps each one independent.
+    """
+    from auth.rate_limit import reset_all
+
+    reset_all()
+    yield
+    reset_all()
+
+
 @pytest.fixture
 def client(db_session):
     """
@@ -128,14 +161,27 @@ def client(db_session):
 
 
 @pytest.fixture
-def login(client):
-    """Log in through the real endpoint and return the bearer header."""
+def login(client, db_session):
+    """Log in through the real endpoint and return the bearer header.
+
+    Takes a *username* and sends the account's actual email address, because
+    email is the only accepted login identifier. Resolving it from the row keeps
+    every existing call site reading in terms of the handle they created.
+
+    The cookie jar is cleared afterwards. Logging in now also sets a session
+    cookie and a TestClient carries cookies forward, so without this every
+    later request in the test would also be cookie-authenticated -- silently
+    changing what "anonymous" means and triggering CSRF enforcement on tests
+    that only ever pass the bearer header. The cookie path has its own tests.
+    """
 
     def _login(username="clinician", password="correct-horse-battery"):
+        user = db_session.query(User).filter_by(username=username).one()
         response = client.post(
-            "/api/auth/login", json={"username": username, "password": password}
+            "/api/auth/login", json={"email": user.email, "password": password}
         )
         assert response.status_code == 200, response.text
+        client.cookies.clear()
         return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     return _login

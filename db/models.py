@@ -305,3 +305,75 @@ class UpgradeRequest(Base):
     def __repr__(self) -> str:
         state = "consumed" if self.consumed_at else "live"
         return f"<PasswordReset user={self.user_id} {state}>"
+
+
+# Security events that are worth being able to reconstruct afterwards. This is an
+# append-only record, not a log line: it is what an investigator reads when
+# asking "who signed in, from where, and what did an administrator change?".
+#
+# It deliberately stores an identifier rather than the raw string a caller typed.
+# A failed sign-in against "alice@example.com" that never matched an account is
+# still worth recording, but the address itself must not become a searchable list
+# of who holds an account here.
+AUTH_EVENT_TYPES = (
+    "login_success",
+    "login_failed",
+    "login_rate_limited",
+    "logout",
+    "register",
+    "password_changed",
+    "password_reset_requested",
+    "password_reset_completed",
+    "role_changed",
+    "plan_changed",
+    "account_activated",
+    "account_deactivated",
+    "admin_password_reset",
+)
+
+
+class AuthEvent(Base):
+    """
+    One security-relevant action.
+
+    user_id is nullable because the events worth recording most -- a failed
+    sign-in, a locked-out attempt -- are precisely the ones that do not resolve
+    to an account.
+
+    actor_user_id is separate from user_id: when an administrator resets
+    somebody's password, user_id is the account acted upon and actor_user_id is
+    the administrator who did it.
+    """
+
+    __tablename__ = "auth_events"
+    __table_args__ = (
+        Index("ix_auth_events_user_created", "user_id", "created_at"),
+        Index("ix_auth_events_type_created", "event_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(
+        SAEnum(*AUTH_EVENT_TYPES, name="auth_event_type", native_enum=False,
+               validate_strings=True),
+        nullable=False,
+    )
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    actor_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    succeeded: Mapped[bool] = mapped_column(nullable=False, default=True)
+    # Hashed, not raw: enough to correlate repeat attempts, not enough to turn
+    # the table into a directory of registered addresses.
+    identifier_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    client_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    detail: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        state = "ok" if self.succeeded else "failed"
+        return f"<AuthEvent {self.event_type} user={self.user_id} {state}>"

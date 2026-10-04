@@ -68,7 +68,7 @@ class TestUpdateProfile:
         assert response.json()["user"]["email"] == "new@example.com"
         # The new address is now a valid sign-in identifier.
         assert client.post("/api/auth/login",
-                           json={"username": "new@example.com",
+                           json={"email": "new@example.com",
                                  "password": PASSWORD}).status_code == 200
 
     def test_email_change_to_a_taken_address_conflicts(self, client, db_session,
@@ -108,10 +108,10 @@ class TestChangePassword:
         assert response.status_code == 200
         assert response.json()["changed"] is True
         assert client.post("/api/auth/login",
-                           json={"username": "clinician",
+                           json={"email": "clinician@example.com",
                                  "password": NEW_PASSWORD}).status_code == 200
         assert client.post("/api/auth/login",
-                           json={"username": "clinician",
+                           json={"email": "clinician@example.com",
                                  "password": PASSWORD}).status_code == 401
 
     def test_reusing_the_same_password_is_rejected(self, client, user, login):

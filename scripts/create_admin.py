@@ -11,6 +11,14 @@ again with the same username updates that account instead of failing.
 
     ADMIN_USERNAME=admin ADMIN_EMAIL=admin@example.com \
         ADMIN_PASSWORD=... python scripts/create_admin.py
+
+Note on the default email: it must be an address the *application* considers
+valid. Everything that touches an email goes through Pydantic's EmailStr, which
+rejects special-use and reserved domains (.local, .test, .localhost, .invalid).
+Seeding "admin@variantlens.local" therefore produced an account that could never
+use password recovery, because the address it was registered against was
+rejected as malformed. The email is validated below so that failure is loud
+rather than silent.
 """
 
 import getpass
@@ -19,6 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from auth.security import hash_password
@@ -26,8 +35,17 @@ from db.database import SessionLocal
 from db.models import Plan, User
 
 DEFAULT_USERNAME = "admin"
-DEFAULT_EMAIL = "admin@variantlens.local"
+DEFAULT_EMAIL = "admin@example.com"
 MIN_PASSWORD_LENGTH = 8
+
+# Same validator the API uses, so the bootstrap can never disagree with it.
+EMAIL_ADAPTER = TypeAdapter(str)
+try:  # Pydantic v2 ships EmailStr; fall back cleanly if unavailable.
+    from pydantic import EmailStr as _EmailStr
+
+    EMAIL_ADAPTER = TypeAdapter(_EmailStr)
+except ImportError:  # pragma: no cover - EmailStr is a hard dependency
+    pass
 
 
 def _resolve_password() -> str:
@@ -48,6 +66,17 @@ def main() -> int:
 
     if len(password) < MIN_PASSWORD_LENGTH:
         raise SystemExit(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+
+    # Validate before touching the database. Writing an address the API would
+    # later reject is how the previous default locked the admin out of recovery.
+    try:
+        EMAIL_ADAPTER.validate_python(email)
+    except ValidationError:
+        raise SystemExit(
+            f"Refusing to create the account: {email!r} is not a valid email "
+            f"address (the API rejects it too). Pass ADMIN_EMAIL=... with an "
+            f"address on a real domain."
+        )
 
     db = SessionLocal()
     try:

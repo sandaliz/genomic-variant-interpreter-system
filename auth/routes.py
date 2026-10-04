@@ -8,11 +8,19 @@ the event loop.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from auth.audit import record
+from auth.cookies import clear_session_cookies, set_session_cookies
 from auth.dependencies import get_current_user
+from auth.rate_limit import (
+    RateLimitExceeded,
+    _client_ip,
+    check_login_allowed,
+    reset_login_attempts,
+)
 from auth.schemas import (
     ChangePasswordRequest,
     LoginRequest,
@@ -77,40 +85,109 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    record(db, "register", user_id=user.id, identifier=email)
     return _public_user(user)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """
     Exchange credentials for an access token.
 
-    The identifier may be either the username or the email address. An "@" is
-    not used to guess which -- both columns are matched in one query, so a
-    username that happens to look like an email still works.
+    Email is the only accepted identifier. Username remains a display handle --
+    unique and immutable, but never a credential -- so signing in cannot be
+    confused with claiming a name. Addresses are stored lower-cased, and the
+    lookup is lower-cased to match, because email is case-insensitive in
+    practice and "Alice@X.com" must reach the same account as "alice@x.com".
+
+    Throttled per client address and per identifier, and every outcome is written
+    to the audit trail.
     """
-    identifier = body.username.strip()
-    # Emails are stored lower-cased; a user pasting "Alice@X.com" must still hit.
-    candidate = identifier.lower() if "@" in identifier else identifier
-    user = db.scalars(
-        select(User).where(
-            or_(User.username == identifier, User.email == candidate)
+    identifier = str(body.email).strip().lower()
+
+    # Checked before the password is verified, so a blocked caller costs no
+    # Argon2id work.
+    try:
+        check_login_allowed(request, identifier)
+    except RateLimitExceeded as exc:
+        record(
+            db, "login_rate_limited", succeeded=False, identifier=identifier,
+            client_ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+            detail=f"retry_after={exc.retry_after}",
         )
-    ).one_or_none()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many sign-in attempts. Try again in a few minutes.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
+    # Emails are stored lower-cased (register and profile-update both do it), so
+    # the lookup lower-cases too. A user pasting "Alice@X.com" still signs in.
+    user = db.scalars(select(User).where(User.email == identifier)).one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         # Identical response for "no such account" and "wrong password", so the
-        # endpoint cannot be used to enumerate usernames or addresses.
+        # endpoint cannot be used to enumerate addresses. The audit record still
+        # distinguishes them, which is the point of having one.
+        record(
+            db, "login_failed", succeeded=False, identifier=identifier,
+            user_id=user.id if user is not None else None,
+            client_ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+            detail="no match" if user is None else "bad password",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Invalid username or password.")
+                            detail="Invalid email or password.")
     if not user.is_active:
+        record(
+            db, "login_failed", succeeded=False, user_id=user.id,
+            identifier=identifier, client_ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            detail="account deactivated",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Account is deactivated.")
+
+    # A correct password clears the throttle, so a user who mistyped a couple of
+    # times is not left locked out of their own account.
+    reset_login_attempts(identifier)
+    record(
+        db, "login_success", user_id=user.id, identifier=identifier,
+        client_ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+    )
     token = create_access_token(user.id, user.username, user.role)
+    # Two delivery mechanisms on purpose. The cookie is what the browser uses --
+    # HttpOnly, so script cannot read it. access_token in the body stays for curl,
+    # the test suite and scripted integrations.
+    csrf = set_session_cookies(response, token)
     return TokenResponse(
         access_token=token,
         expires_in=JWT_EXPIRE_MINUTES * 60,
         user=_public_user(user),
+        csrf_token=csrf,
     )
+
+
+@router.post("/logout")
+def logout(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clear the session cookies.
+
+    The token itself cannot be revoked without either a deny-list or rotating the
+    signing key, so signing out here means "this browser no longer presents a
+    credential". Anything already holding the token keeps its access until it
+    expires -- which is also why clearing the client-side copy matters.
+    """
+    clear_session_cookies(response)
+    record(db, "logout", user_id=current_user.id, actor_user_id=current_user.id)
+    return {"signed_out": True}
 
 
 @router.post("/password-reset/request",
@@ -141,6 +218,15 @@ def request_password_reset(body: PasswordResetRequest, db: Session = Depends(get
             secret=code,
         )
 
+    # Audited on both paths. The identifier is hashed, so recording a request
+    # against an address that belongs to nobody is not the same as storing it.
+    record(
+        db, "password_reset_requested",
+        user_id=user.id if user is not None else None,
+        identifier=email,
+        detail="code issued" if code else "no matching active account",
+    )
+
     return PasswordResetRequestedResponse(
         message=_RESET_REQUEST_MESSAGE,
         delivery=mailer.describe(),
@@ -152,6 +238,7 @@ def request_password_reset(body: PasswordResetRequest, db: Session = Depends(get
 @router.post("/password-reset/confirm", response_model=MeResponse)
 def confirm_password_reset(
     body: PasswordResetConfirmRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """
@@ -176,10 +263,12 @@ def confirm_password_reset(
     user.password_hash = hash_password(body.new_password)
     db.commit()
     db.refresh(user)
+    record(db, "password_reset_completed", user_id=user.id, identifier=email)
 
     used = usage_this_month(db, user.id)
     info = entitlements(user, used)
     token = create_access_token(user.id, user.username, user.role)
+    csrf = set_session_cookies(response, token)
     return MeResponse(
         user=_public_user(user),
         plan=user.plan,
@@ -195,6 +284,7 @@ def confirm_password_reset(
         },
         access_token=token,
         expires_in=JWT_EXPIRE_MINUTES * 60,
+        csrf_token=csrf,
     )
 
 
@@ -293,5 +383,7 @@ def change_password(
 
     current_user.password_hash = hash_password(body.new_password)
     db.commit()
+    record(db, "password_changed", user_id=current_user.id,
+           actor_user_id=current_user.id)
     # Response says only that it happened -- never the password, never the hash.
     return {"changed": True}
