@@ -76,6 +76,11 @@ class MessageType:
     CLASSIFICATION_ERROR = "CLASSIFICATION_ERROR"
     REPORT_RESULT = "REPORT_RESULT"
     REPORT_ERROR = "REPORT_ERROR"
+    # Agentic control messages: the Supervisor's plan for a run, and the
+    # Verifier's critique of a classification (which may trigger one bounded
+    # self-correction round).
+    PLAN = "PLAN"
+    VERIFICATION_RESULT = "VERIFICATION_RESULT"
     SYSTEM_LOG = "SYSTEM_LOG"
 
 
