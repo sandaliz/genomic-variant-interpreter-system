@@ -54,8 +54,8 @@ function applyLandingImages(){
 
 const EXAMPLES = [
   { label: 'Gene + variant',  q: "Is BRCA1 NC_000017.10:g.41244442A>G pathogenic?" },
-  { label: 'Short form',      q: "Classify BRCA2 c.5946delT" },
-  { label: 'By rsID',         q: "What do we know about rs80356943?" },
+  { label: 'Short form',      q: "Could you assess BRCA2:c.5946delT and highlight the key evidence relevant to its classification?" },
+  { label: 'By rsID',         q: "I found rs80356943 in a patient. What does the available evidence suggest about this variant?" },
   { label: 'Whole gene',      q: "Tell me about variants in BRCA1" }
 ];
 
