@@ -877,7 +877,13 @@ class EvidenceRetrievalAgent:
         # as *the* answer. Resolve the queried variant from the dedicated BRCA
         # index first; only if that also misses do we keep the fuzzy result.
         from_variant_summary = False
-        if query_type in ("gene_variant", "variant_only", "rsid", "rsid_search"):
+        if query_type in (
+            "gene_variant",
+            "variant_only",
+            "position_only",
+            "rsid",
+            "rsid_search",
+        ):
             have_exact = not candidates.empty and self._primary_is_exact(
                 candidates.iloc[0], gene, hgvs, rsid, position
             )

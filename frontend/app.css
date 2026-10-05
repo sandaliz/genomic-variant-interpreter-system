@@ -190,6 +190,7 @@
   #loading p{font-size:12.5px;color:var(--ink-soft);}
 
   #error{display:none;border-left:3px solid var(--pathogenic);background:var(--pathogenic-bg);
+    white-space:pre-line;
     padding:14px 18px;border-radius:0 4px 4px 0;margin-bottom:22px;font-size:13px;
     line-height:1.6;color:var(--pathogenic);}
 
@@ -1166,4 +1167,3 @@ input:disabled{background:#F1EFE7;color:var(--ink-faint);cursor:not-allowed;}
 @media (max-width:900px){
   .flow-loop-svg,.flow-loop-label{display:none;}
 }
-

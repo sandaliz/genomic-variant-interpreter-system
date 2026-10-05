@@ -86,6 +86,18 @@ class TestEvidenceRetrievalAgent:
         assert payload["found"] is True
         assert payload["gene"] == "BRCA1"
 
+    def test_bare_position_uses_variant_summary_fallback(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        """A bare genomic position should resolve through the ClinVar index."""
+        intake_msg = intake_agent.process("41209082", message_log)
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["found"] is True
+        assert payload["query_type"] == "position_only"
+        assert payload["coverage_fallback"] is True
+
     def test_ir_metadata_present(self, evidence_agent, intake_agent, message_log):
         """Should include IR metadata for transparency."""
         intake_msg = intake_agent.process(

@@ -90,12 +90,48 @@ class TestIntakeAgent:
         assert payload["position"] == "41197778"
         assert payload["query_type"] == "position"
 
+    def test_process_bare_position_query(self, intake_agent, message_log):
+        """Should accept a bare genomic position as a position-only query."""
+        msg = intake_agent.process("41209082", message_log)
+        payload = msg.decrypt_payload()
+        assert payload["position"] == "41209082"
+        assert payload["query_type"] == "position_only"
+        assert msg.variant_id == "unknown:pos41209082"
+
+    @pytest.mark.parametrize("query", ["BRCA1 41209082", "BRCA1:41209082"])
+    def test_process_compact_gene_position_query(
+        self, intake_agent, message_log, query
+    ):
+        msg = intake_agent.process(query, message_log)
+        payload = msg.decrypt_payload()
+        assert payload["gene"] == "BRCA1"
+        assert payload["position"] == "41209082"
+        assert payload["query_type"] == "position"
+
+    def test_process_common_hgvs_prefix(self, intake_agent, message_log):
+        msg = intake_agent.process("NM_000059.4:c.5946delT", message_log)
+        payload = msg.decrypt_payload()
+        assert payload["hgvs"] == "NM_000059.4:c.5946delT"
+        assert payload["query_type"] == "variant_only"
+
     def test_process_rejects_unknown_gene(self, intake_agent, message_log):
         """Should reject queries with unsupported genes when used as gene_variant."""
-        with pytest.raises(InvalidVariantQuery):
+        with pytest.raises(InvalidVariantQuery, match="TP53.*outside this system's scope"):
             intake_agent.process(
                 "Is TP53 NC_000017.10:g.41197778A>G pathogenic?", message_log
             )
+
+    def test_process_suggests_supported_gene_for_unknown_gene(
+        self, intake_agent, message_log
+    ):
+        with pytest.raises(InvalidVariantQuery, match="Did you mean BRCA1"):
+            intake_agent.process("What variants are in BRCAI?", message_log)
+
+    def test_process_explains_malformed_variant_token(
+        self, intake_agent, message_log
+    ):
+        with pytest.raises(InvalidVariantQuery, match="variant-like token"):
+            intake_agent.process("Classify BRCA2 c.5946", message_log)
 
     def test_process_rejects_unknown_query(self, intake_agent, message_log):
         """Should reject queries with no recognizable entities."""
