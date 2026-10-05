@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1080" width="1200" height="1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A laboratory microscope on a bench">
+  <!-- VarientLens landing imagery -- precision analysis. Deliberately light: it
+       sits opposite the dark capability band, and a lab is a bright room. -->
+  <defs>
+    <linearGradient id="miBg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#F4F7FB"/>
+      <stop offset="0.6" stop-color="#E7EDF6"/>
+      <stop offset="1" stop-color="#DCE5F1"/>
+    </linearGradient>
+    <radialGradient id="miGlow" cx="0.5" cy="0.34" r="0.6">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="miLamp" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8FB0E0" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8FB0E0" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="miGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#3F5F9A" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="1080" fill="url(#miBg)"/>
+  <rect width="1200" height="1080" fill="url(#miGrid)" opacity="0.07"/>
+  <rect width="1200" height="1080" fill="url(#miGlow)"/>
+
+  <!-- Contact shadow on the bench. -->
+  <ellipse cx="596" cy="1000" rx="330" ry="30" fill="#142B4A" opacity="0.08"/>
+  <ellipse cx="596" cy="994" rx="190" ry="18" fill="#142B4A" opacity="0.06"/>
+
+  <!-- Stand -->
+  <ellipse cx="600" cy="952" rx="286" ry="40" fill="#142B4A"/>
+  <rect x="372" y="898" width="456" height="56" rx="18" fill="#1B3A61"/>
+  <ellipse cx="600" cy="898" rx="228" ry="26" fill="#24406B"/>
+  <rect x="714" y="420" width="80" height="482" rx="36" fill="#1B3A61"/>
+  <path d="M714,470 C714,376 664,326 566,318" fill="none" stroke="#1B3A61"
+        stroke-width="80" stroke-linecap="round"/>
+
+  <!-- Eyepiece, tilted away from the viewer the way a real binocular head sits. -->
+  <g transform="rotate(-32 562 300)">
+    <rect x="500" y="180" width="124" height="146" rx="22" fill="#142B4A"/>
+    <rect x="524" y="146" width="76" height="48" rx="16" fill="#1B3A61"/>
+    <rect x="540" y="152" width="44" height="12" rx="6" fill="#4F76B4" opacity="0.6"/>
+  </g>
+
+  <!-- Body tube -->
+  <rect x="506" y="300" width="112" height="262" rx="22" fill="#24406B"/>
+  <rect x="524" y="320" width="18" height="222" rx="9" fill="#8FB0E0" opacity="0.4"/>
+
+  <!-- Revolving nosepiece and three objectives -->
+  <ellipse cx="574" cy="564" rx="82" ry="14" fill="#24406B"/>
+  <path d="M494,562 H654 L636,602 H512 Z" fill="#142B4A"/>
+  <path d="M492,600 H536 L528,668 H500 Z" fill="#24406B"/>
+  <rect x="502" y="664" width="24" height="18" rx="4" fill="#3F5F9A"/>
+  <path d="M552,600 H600 L592,692 H560 Z" fill="#1B3A61"/>
+  <rect x="562" y="688" width="28" height="18" rx="4" fill="#8FB0E0"/>
+  <path d="M614,600 H660 L652,662 H622 Z" fill="#24406B"/>
+  <rect x="626" y="658" width="24" height="16" rx="4" fill="#3F5F9A"/>
+
+  <!-- Stage, slide and the light path under it -->
+  <rect x="336" y="712" width="452" height="24" rx="6" fill="#1B3A61"/>
+  <rect x="356" y="702" width="412" height="12" rx="4" fill="#3F5F9A"/>
+  <rect x="430" y="692" width="264" height="12" rx="3" fill="#E9EEF6" opacity="0.92"/>
+  <rect x="520" y="736" width="96" height="56" rx="10" fill="#24406B"/>
+  <ellipse cx="568" cy="806" rx="96" ry="34" fill="url(#miLamp)"/>
+  <ellipse cx="568" cy="806" rx="54" ry="17" fill="#3F5F9A"/>
+  <ellipse cx="568" cy="804" rx="30" ry="9" fill="#8FB0E0"/>
+
+  <!-- Coarse and fine focus -->
+  <circle cx="754" cy="706" r="52" fill="#24406B"/>
+  <circle cx="754" cy="706" r="36" fill="#1B3A61"/>
+  <circle cx="754" cy="706" r="14" fill="#526FA8"/>
+  <circle cx="754" cy="604" r="30" fill="#24406B"/>
+  <circle cx="754" cy="604" r="12" fill="#526FA8"/>
+  <circle cx="754" cy="800" r="24" fill="#24406B"/>
+  <circle cx="754" cy="800" r="9" fill="#526FA8"/>
+
+  <!-- Instrument annotation: a hairline measure and a datum mark. -->
+  <g stroke="#3F5F9A" fill="none">
+    <path d="M282,300 V960" stroke-width="1" stroke-dasharray="6 6" opacity="0.35"/>
+    <path d="M274,300 H290 M274,960 H290" stroke-width="1" opacity="0.45"/>
+    <path d="M900,440 H1096" stroke-width="1" stroke-dasharray="6 6" opacity="0.35"/>
+    <path d="M896,434 V446 M1100,434 V446" stroke-width="1" opacity="0.45"/>
+  </g>
+  <circle cx="900" cy="440" r="4" fill="#3F5F9A"/>
+</svg>

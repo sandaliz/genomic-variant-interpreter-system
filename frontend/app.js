@@ -1,3 +1,54 @@
+/* ==========================================================================
+   Landing page imagery.
+
+   ONE place to swap the pictures. Every <img> on the marketing page carries a
+   data-img key instead of a src, and applyLandingImages() fills them in from
+   this object at startup -- so replacing a photograph is a one-line edit here
+   rather than a hunt through the markup.
+
+   Drop the files into frontend/images/landing/ and point the keys at them. The
+   layout deliberately does not depend on their dimensions: each frame owns its
+   own aspect-ratio and the image is object-fit:cover inside it, so a source of
+   any shape crops correctly instead of distorting.
+
+   The shipped placeholders are SVG -- resolution independent, a few KB each, and
+   drawn in the product palette so they read as part of the design rather than as
+   stock photography standing in for one. Rename any value to .jpg/.webp to swap
+   in the real thing.
+   ========================================================================== */
+const LANDING_IMAGE_BASE = '/static/images/landing/';
+
+const landingImages = {
+  // Hero: the large scientific visual beside the headline.
+  hero:            LANDING_IMAGE_BASE + 'hero.svg',
+  // The three platform cards.
+  variantAnalysis: LANDING_IMAGE_BASE + 'variant-analysis.svg',
+  genetics:        LANDING_IMAGE_BASE + 'genetics.svg',
+  clinical:        LANDING_IMAGE_BASE + 'clinical-interpretation.svg',
+  // The precision-analysis split section.
+  microscope:      LANDING_IMAGE_BASE + 'microscope.svg',
+  laboratory:      LANDING_IMAGE_BASE + 'laboratory.svg',
+  // The three insight panels.
+  solutionOne:     LANDING_IMAGE_BASE + 'solution-1.svg',
+  solutionTwo:     LANDING_IMAGE_BASE + 'solution-2.svg',
+  solutionThree:   LANDING_IMAGE_BASE + 'solution-3.svg',
+};
+
+// Fill every [data-img] placeholder from the map above. A key with no entry is
+// left alone and named in the console, so a typo surfaces as one missing picture
+// with a clear reason rather than as a page full of broken-image icons.
+function applyLandingImages(){
+  document.querySelectorAll('[data-img]').forEach(img => {
+    const key = img.dataset.img;
+    const src = landingImages[key];
+    if (!src){
+      console.warn('landingImages has no entry for "' + key + '"');
+      return;
+    }
+    if (img.getAttribute('src') !== src) img.src = src;
+  });
+}
+
 const EXAMPLES = [
   { label: 'Gene + variant',  q: "Is BRCA1 NC_000017.10:g.41244442A>G pathogenic?" },
   { label: 'Short form',      q: "Classify BRCA2 c.5946delT" },
@@ -544,6 +595,90 @@ function goToSection(id){
   } else {
     scroll();
   }
+}
+
+// ---- Mobile navigation -------------------------------------------------
+// Below 1040px the section links, and below 720px the account actions, move
+// into a panel behind the hamburger. Both copies live in this document and keep
+// their own onclick, so this is only ever a visibility toggle -- there is no
+// second set of handlers to drift out of step with the header.
+function toggleMobileNav(event){
+  if (event) event.stopPropagation();
+  const panel = document.getElementById('mobileNav');
+  const btn = document.getElementById('navToggle');
+  if (!panel || !btn) return;
+  const open = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !open);
+  btn.setAttribute('aria-expanded', String(open));
+}
+
+function closeMobileNav(){
+  const panel = document.getElementById('mobileNav');
+  const btn = document.getElementById('navToggle');
+  if (panel) panel.classList.add('hidden');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// A click anywhere else closes the panel, the way a native menu behaves. The
+// toggle itself is excluded by closest(), not by id: the hamburger is three
+// spans, so the click target is usually a bar rather than the button.
+document.addEventListener('click', e => {
+  const panel = document.getElementById('mobileNav');
+  if (!panel || panel.classList.contains('hidden')) return;
+  if (panel.contains(e.target)) return;
+  if (e.target.closest && e.target.closest('#navToggle')) return;
+  closeMobileNav();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeMobileNav();
+});
+
+// ---- Scroll reveal -----------------------------------------------------
+// Subtle fade-up as sections arrive. Applied from here rather than declared in
+// the markup on purpose: if this never runs -- no IntersectionObserver, a failed
+// script load, reduced motion -- the page is simply fully visible, which is the
+// only acceptable failure mode for content.
+//
+// The classes are dropped once the entry has finished, because a lingering
+// transition-delay on the element would also delay its own hover transitions.
+function initReveal(){
+  const selector = [
+    '.hero-copy', '.hero-media', '.trust-item', '.section-head-block',
+    '.vcard', '.pcard', '.split-copy', '.split-media', '.point', '.cap',
+    '.sb-item', '.about-body', '.about-facts', '.price-card', '.example-btn',
+    '.faq-item', '.cta-inner > *'
+  ].join(', ');
+
+  const targets = document.querySelectorAll(selector);
+  if (!targets.length) return;
+  if (!('IntersectionObserver' in window)) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const el = entry.target;
+      el.classList.add('reveal-visible');
+      io.unobserve(el);
+      window.setTimeout(() => {
+        el.classList.remove('reveal', 'reveal-visible');
+        el.style.transitionDelay = '';
+      }, 900);
+    });
+  }, { rootMargin: '0px 0px -6% 0px', threshold: 0.04 });
+
+  targets.forEach((el, i) => {
+    // Skip anything a [data-when] group has hidden for this session. A
+    // display:none element never intersects, so it would keep the reveal class
+    // and stay at opacity 0 if it were later shown by signing in.
+    if (el.closest('.hidden')) return;
+    el.classList.add('reveal');
+    // A short stagger within each visible group, capped at four steps so a long
+    // list never turns into a queue.
+    el.style.transitionDelay = (i % 4) * 55 + 'ms';
+    io.observe(el);
+  });
 }
 
 function toggleProfileMenu(event){
@@ -3053,5 +3188,11 @@ function initFlow(){
 
 // Restore an existing session on load (if the stored token is still valid) and
 // otherwise land on the marketing page with sign-in available in the header.
+//
+// The image map is applied first: it fills the [data-img] placeholders before
+// the reveal observer measures anything, so a frame never animates in empty and
+// then reflow when its picture arrives.
+applyLandingImages();
+initReveal();
 initFlow();
 refreshSession();

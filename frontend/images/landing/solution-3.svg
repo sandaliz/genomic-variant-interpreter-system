@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A query volume chart above a diagram of connected systems">
+  <!-- VarientLens landing imagery -- a workflow that scales. -->
+  <defs>
+    <linearGradient id="s3Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#F2F6FB"/>
+      <stop offset="0.6" stop-color="#E7EDF6"/>
+      <stop offset="1" stop-color="#DDE6F1"/>
+    </linearGradient>
+    <linearGradient id="s3Fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="s3Shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#142B4A" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="s3Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#3F5F9A" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#s3Bg)"/>
+  <rect width="1200" height="900" fill="url(#s3Grid)" opacity="0.07"/>
+
+  <g filter="url(#s3Shadow)">
+    <rect x="110" y="90" width="980" height="720" rx="10" fill="#FFFFFF"/>
+  </g>
+
+  <rect x="142" y="140" width="164" height="10" rx="5" fill="#C6CEDA"/>
+  <rect x="142" y="164" width="92" height="8" rx="4" fill="#E1E6EE"/>
+  <path d="M142,190 H1058" stroke="#D6DAE0" stroke-width="1"/>
+
+  <!-- Volume over time. Bars carry the run count; the line carries the trend. -->
+  <path d="M142,430 H1058" stroke="#E4E9F0" stroke-width="1"/>
+  <g fill="#526FA8" opacity="0.35">
+    <rect x="166"  y="340" width="44" height="90"/>
+    <rect x="240"  y="300" width="44" height="130"/>
+    <rect x="314"  y="320" width="44" height="110"/>
+    <rect x="388"  y="260" width="44" height="170"/>
+    <rect x="462"  y="280" width="44" height="150"/>
+    <rect x="536"  y="230" width="44" height="200"/>
+    <rect x="610"  y="250" width="44" height="180"/>
+    <rect x="684"  y="200" width="44" height="230"/>
+    <rect x="758"  y="220" width="44" height="210"/>
+    <rect x="832"  y="180" width="44" height="250"/>
+    <rect x="906"  y="195" width="44" height="235"/>
+    <rect x="980"  y="160" width="44" height="270"/>
+  </g>
+  <path d="M188,340 L262,300 L336,320 L410,260 L484,280 L558,230 L632,250 L706,200 L780,220
+           L854,180 L928,195 L1002,160 L1002,430 L188,430 Z"
+        fill="url(#s3Fill)"/>
+  <path d="M188,340 L262,300 L336,320 L410,260 L484,280 L558,230 L632,250 L706,200 L780,220
+           L854,180 L928,195 L1002,160"
+        fill="none" stroke="#3F5F9A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="1002" cy="160" r="7" fill="#1B3A61"/>
+  <circle cx="1002" cy="160" r="14" fill="#3F5F9A" opacity="0.18"/>
+
+  <path d="M142,538 H1058" stroke="#D6DAE0" stroke-width="1"/>
+
+  <!-- The pipeline reaching into the systems a laboratory already runs. -->
+  <g>
+    <path d="M306,644 H434 M566,644 H694 M826,644 H954"
+          stroke="#B9C2D0" stroke-width="2" stroke-dasharray="7 6"/>
+    <circle cx="370" cy="644" r="4" fill="#3F5F9A"/>
+    <circle cx="630" cy="644" r="4" fill="#3F5F9A"/>
+    <circle cx="890" cy="644" r="4" fill="#3F5F9A"/>
+
+    <rect x="142" y="602" width="164" height="84" rx="8" fill="#142B4A"/>
+    <rect x="172" y="630" width="86" height="10" rx="5" fill="#8FB0E0"/>
+    <rect x="172" y="650" width="56" height="8" rx="4" fill="#526FA8"/>
+
+    <rect x="434" y="602" width="132" height="84" rx="8" fill="#E9EEF6"/>
+    <rect x="462" y="630" width="76" height="10" rx="5" fill="#3F5F9A"/>
+    <rect x="462" y="650" width="48" height="8" rx="4" fill="#B9C2D0"/>
+
+    <rect x="694" y="602" width="132" height="84" rx="8" fill="#E9EEF6"/>
+    <rect x="722" y="630" width="76" height="10" rx="5" fill="#3F5F9A"/>
+    <rect x="722" y="650" width="48" height="8" rx="4" fill="#B9C2D0"/>
+
+    <rect x="954" y="602" width="104" height="84" rx="8" fill="#FBF1DE"/>
+    <rect x="980" y="630" width="52" height="10" rx="5" fill="#D9A441"/>
+    <rect x="980" y="650" width="34" height="8" rx="4" fill="#E4C89A"/>
+  </g>
+
+  <rect x="142" y="734" width="196" height="10" rx="5" fill="#DCE2EB"/>
+  <rect x="900" y="730" width="158" height="18" rx="9" fill="#E9EEF6"/>
+</svg>

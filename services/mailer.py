@@ -71,7 +71,7 @@ class Mailer:
     def _text_message(to_email: str, subject: str, body: str) -> EmailMessage:
         message = EmailMessage()
         message["From"] = os.getenv(
-            "MAIL_FROM", "VariantLens <noreply@variantlens.local>")
+            "MAIL_FROM", "VarientLens <noreply@variantlens.local>")
         message["To"] = to_email
         message["Subject"] = subject
         message.set_content(body)
@@ -182,7 +182,7 @@ def get_mailer() -> Mailer:
             )
         return ResendMailer(
             api_key,
-            os.getenv("RESEND_FROM", "VariantLens <noreply@example.com>"),
+            os.getenv("RESEND_FROM", "VarientLens <noreply@example.com>"),
         )
 
     if transport == "smtp":
@@ -205,7 +205,7 @@ def get_mailer() -> Mailer:
 def reset_code_body(code: str, minutes: int) -> str:
     """Plain-text body for a password-reset code."""
     return (
-        "You asked to reset the password for your VariantLens account.\n\n"
+        "You asked to reset the password for your VarientLens account.\n\n"
         f"    Verification code: {code}\n\n"
         f"The code expires in {minutes} minutes and can only be used once.\n"
         "If you did not request this, you can safely ignore this message -- "

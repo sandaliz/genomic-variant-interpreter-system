@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A criteria checklist, a confidence gauge and a reviewer sign-off block">
+  <!-- VarientLens landing imagery -- interpretation you can review. -->
+  <defs>
+    <linearGradient id="s2Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#F1F5FB"/>
+      <stop offset="0.6" stop-color="#E5ECF6"/>
+      <stop offset="1" stop-color="#DAE3F0"/>
+    </linearGradient>
+    <filter id="s2Shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#142B4A" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="s2Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#3F5F9A" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#s2Bg)"/>
+  <rect width="1200" height="900" fill="url(#s2Grid)" opacity="0.07"/>
+
+  <g filter="url(#s2Shadow)">
+    <rect x="110" y="90" width="980" height="720" rx="10" fill="#FFFFFF"/>
+  </g>
+
+  <rect x="142" y="140" width="150" height="10" rx="5" fill="#C6CEDA"/>
+  <path d="M142,176 H1058" stroke="#D6DAE0" stroke-width="1"/>
+
+  <!-- Criteria applied. The tick says the code was satisfied; the hollow ones say
+       it was considered and not met, which is the distinction that matters. -->
+  <g>
+    <rect x="142" y="204" width="140" height="40" rx="8" fill="#E9EEF6"/>
+    <path d="M164,226 l6,7 l13,-15" fill="none" stroke="#2F6B4F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="196" y="220" width="66" height="9" rx="4" fill="#3F5F9A"/>
+
+    <rect x="294" y="204" width="140" height="40" rx="8" fill="#E9EEF6"/>
+    <path d="M316,226 l6,7 l13,-15" fill="none" stroke="#2F6B4F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="348" y="220" width="66" height="9" rx="4" fill="#3F5F9A"/>
+
+    <rect x="446" y="204" width="140" height="40" rx="8" fill="#E9EEF6"/>
+    <path d="M468,226 l6,7 l13,-15" fill="none" stroke="#2F6B4F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="500" y="220" width="66" height="9" rx="4" fill="#3F5F9A"/>
+
+    <rect x="598" y="204" width="140" height="40" rx="8" fill="#FBF1DE"/>
+    <path d="M620,220 v16 M620,220 h14" fill="none" stroke="#8C6210" stroke-width="2.5" stroke-linecap="round"/>
+    <rect x="652" y="220" width="66" height="9" rx="4" fill="#D9A441"/>
+
+    <rect x="750" y="204" width="140" height="40" rx="8" fill="#E9EEF6"/>
+    <circle cx="772" cy="224" r="9" fill="none" stroke="#B9C2D0" stroke-width="2.5"/>
+    <rect x="804" y="220" width="66" height="9" rx="4" fill="#B9C2D0"/>
+
+    <rect x="902" y="204" width="140" height="40" rx="8" fill="#E9EEF6"/>
+    <circle cx="924" cy="224" r="9" fill="none" stroke="#B9C2D0" stroke-width="2.5"/>
+    <rect x="956" y="220" width="66" height="9" rx="4" fill="#B9C2D0"/>
+  </g>
+
+  <path d="M142,296 H1058" stroke="#EDF0F5" stroke-width="1"/>
+
+  <!-- Confidence gauge: an arc, turned so it starts at twelve o'clock. -->
+  <g transform="rotate(-90 268 442)">
+    <circle cx="268" cy="442" r="86" fill="none" stroke="#E9EEF0" stroke-width="18"/>
+    <circle cx="268" cy="442" r="86" fill="none" stroke="#3F5F9A" stroke-width="18"
+            stroke-linecap="round" stroke-dasharray="389 540"/>
+  </g>
+  <rect x="238" y="432" width="60" height="20" rx="6" fill="#1B3A61"/>
+
+  <g>
+    <rect x="430" y="368" width="96" height="9" rx="4" fill="#C6CEDA"/>
+    <rect x="430" y="392" width="420" height="12" rx="6" fill="#DCE2EB"/>
+    <rect x="430" y="424" width="340" height="10" rx="5" fill="#E4E9F0"/>
+    <rect x="430" y="424" width="238" height="10" rx="5" fill="#3F5F9A" opacity="0.8"/>
+    <rect x="430" y="456" width="380" height="10" rx="5" fill="#E4E9F0"/>
+    <rect x="430" y="456" width="176" height="10" rx="5" fill="#3F5F9A" opacity="0.55"/>
+    <rect x="430" y="488" width="300" height="10" rx="5" fill="#E4E9F0"/>
+    <rect x="430" y="488" width="112" height="10" rx="5" fill="#D9A441" opacity="0.75"/>
+  </g>
+
+  <path d="M142,566 H1058" stroke="#D6DAE0" stroke-width="1"/>
+
+  <!-- Sign-off, the part that makes the call somebody's responsibility. -->
+  <rect x="142" y="600" width="900" height="150" rx="8" fill="#F2F5FA"/>
+  <rect x="176" y="628" width="104" height="9" rx="4" fill="#C6CEDA"/>
+  <path d="M176,700 H560" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <rect x="196" y="676" width="196" height="16" rx="4" fill="#1B3A61"/>
+  <path d="M612,700 H828" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <rect x="632" y="676" width="128" height="16" rx="4" fill="#DCE2EB"/>
+  <rect x="862" y="658" width="148" height="32" rx="16" fill="#EAF2ED"/>
+  <circle cx="886" cy="674" r="7" fill="#2F6B4F"/>
+  <rect x="902" y="669" width="90" height="9" rx="4" fill="#2F6B4F" opacity="0.65"/>
+</svg>

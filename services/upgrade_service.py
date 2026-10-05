@@ -134,7 +134,7 @@ def decision_body(request: UpgradeRequest, plan_name: str, user_name: str) -> st
     outcome = ("has been approved" if request.status == "approved"
                else "has been declined")
     lines = [
-        f"Your VariantLens upgrade request for the {plan_name} plan {outcome}.",
+        f"Your VarientLens upgrade request for the {plan_name} plan {outcome}.",
         "",
     ]
     if request.admin_note:

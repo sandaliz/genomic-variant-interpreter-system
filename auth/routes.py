@@ -51,7 +51,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 # One response body for every outcome of a reset request, so the endpoint cannot
 # be used to discover which email addresses have accounts.
 _RESET_REQUEST_MESSAGE = (
-    "If that email address has a VariantLens account, a verification code has "
+    "If that email address has a VarientLens account, a verification code has "
     "been sent to it."
 )
 
@@ -219,7 +219,7 @@ def request_password_reset(body: PasswordResetRequest, db: Session = Depends(get
         _, code = issue_code(db, user)
         mailer.send(
             to_email=user.email,
-            subject="Your VariantLens verification code",
+            subject="Your VarientLens verification code",
             body=reset_code_body(code, CODE_TTL_MINUTES),
             secret=code,
         )

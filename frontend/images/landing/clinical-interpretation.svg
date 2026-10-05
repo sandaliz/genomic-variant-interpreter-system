@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A variant interpretation report showing a verdict, a confidence gauge and the criteria applied">
+  <!-- VarientLens landing imagery -- clinical interpretation. -->
+  <defs>
+    <linearGradient id="ciBg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0D2039"/>
+      <stop offset="0.55" stop-color="#142B4A"/>
+      <stop offset="1" stop-color="#0B1C34"/>
+    </linearGradient>
+    <radialGradient id="ciGlow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#4E7BC4" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#4E7BC4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ciCard" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF2F8"/>
+    </linearGradient>
+    <filter id="ciShadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#040C1A" flood-opacity="0.6"/>
+    </filter>
+    <pattern id="ciGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#8FB0E0" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#ciBg)"/>
+  <rect width="1200" height="900" fill="url(#ciGrid)" opacity="0.055"/>
+  <ellipse cx="600" cy="410" rx="580" ry="440" fill="url(#ciGlow)"/>
+
+  <g filter="url(#ciShadow)">
+    <rect x="170" y="112" width="860" height="660" rx="10" fill="url(#ciCard)"/>
+  </g>
+
+  <g>
+    <!-- Header: a label rule and a document title. -->
+    <rect x="202" y="146" width="128" height="10" rx="5" fill="#B9C2D0"/>
+    <path d="M202,182 H998" stroke="#D6DAE0" stroke-width="1"/>
+
+    <!-- Verdict panel. The left bar is the clinical signal colour, exactly as the
+         real report carries it. -->
+    <rect x="202" y="210" width="796" height="154" rx="8" fill="#FFFFFF" stroke="#E1E6EE"/>
+    <rect x="202" y="210" width="7" height="154" rx="3" fill="#A33A2E"/>
+    <rect x="230" y="234" width="96" height="9" rx="4" fill="#C6CEDA"/>
+    <rect x="230" y="256" width="212" height="24" rx="4" fill="#1B3A61"/>
+    <rect x="230" y="304" width="430" height="9" rx="4" fill="#E4E9F0"/>
+    <rect x="230" y="304" width="308" height="9" rx="4" fill="#3F5F9A"/>
+    <rect x="230" y="330" width="180" height="7" rx="3" fill="#DCE2EB"/>
+
+    <!-- Confidence gauge: an arc, turned so it starts at twelve o'clock. -->
+    <g transform="rotate(-90 924 288)">
+      <circle cx="924" cy="288" r="52" fill="none" stroke="#E4E9F0" stroke-width="11"/>
+      <circle cx="924" cy="288" r="52" fill="none" stroke="#3F5F9A" stroke-width="11"
+              stroke-linecap="round" stroke-dasharray="235 327"/>
+    </g>
+
+    <!-- Criteria applied: chips of uneven width, one of them flagged. -->
+    <rect x="202" y="396" width="150" height="30" rx="15" fill="#E9EEF6"/>
+    <rect x="364" y="396" width="124" height="30" rx="15" fill="#E9EEF6"/>
+    <rect x="500" y="396" width="168" height="30" rx="15" fill="#E9EEF6"/>
+    <rect x="680" y="396" width="112" height="30" rx="15" fill="#FBF1DE"/>
+
+    <!-- Ranked evidence, top five. -->
+    <path d="M202,454 H998" stroke="#D6DAE0" stroke-width="1"/>
+    <g>
+      <circle cx="216" cy="487" r="8" fill="#E9EEF6"/>
+      <rect x="240" y="482" width="150" height="10" rx="5" fill="#9FAABA"/>
+      <rect x="410" y="482" width="212" height="10" rx="5" fill="#DCE2EB"/>
+      <rect x="920" y="482" width="78" height="10" rx="5" fill="#3F5F9A"/>
+    </g>
+    <g>
+      <circle cx="216" cy="535" r="8" fill="#E9EEF6"/>
+      <rect x="240" y="530" width="132" height="10" rx="5" fill="#9FAABA"/>
+      <rect x="410" y="530" width="182" height="10" rx="5" fill="#DCE2EB"/>
+      <rect x="938" y="530" width="60" height="10" rx="5" fill="#3F5F9A" opacity="0.85"/>
+    </g>
+    <g>
+      <circle cx="216" cy="583" r="8" fill="#E9EEF6"/>
+      <rect x="240" y="578" width="168" height="10" rx="5" fill="#9FAABA"/>
+      <rect x="410" y="578" width="146" height="10" rx="5" fill="#DCE2EB"/>
+      <rect x="952" y="578" width="46" height="10" rx="5" fill="#3F5F9A" opacity="0.7"/>
+    </g>
+    <g>
+      <circle cx="216" cy="631" r="8" fill="#E9EEF6"/>
+      <rect x="240" y="626" width="120" height="10" rx="5" fill="#9FAABA"/>
+      <rect x="410" y="626" width="196" height="10" rx="5" fill="#DCE2EB"/>
+      <rect x="962" y="626" width="36" height="10" rx="5" fill="#3F5F9A" opacity="0.55"/>
+    </g>
+    <path d="M202,668 H998" stroke="#E4E9F0" stroke-width="1"/>
+
+    <!-- Sign-off: a ruled line waiting for a named reviewer. -->
+    <path d="M202,722 H520" stroke="#C6CEDA" stroke-width="1" stroke-dasharray="5 4"/>
+    <rect x="202" y="700" width="86" height="8" rx="4" fill="#DCE2EB"/>
+    <path d="M566,722 H760" stroke="#C6CEDA" stroke-width="1" stroke-dasharray="5 4"/>
+    <rect x="566" y="700" width="62" height="8" rx="4" fill="#DCE2EB"/>
+    <rect x="812" y="694" width="186" height="34" rx="4" fill="#FBF1DE"/>
+    <rect x="836" y="706" width="138" height="10" rx="5" fill="#D9A441"/>
+  </g>
+</svg>

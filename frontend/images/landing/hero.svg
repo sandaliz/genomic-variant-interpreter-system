@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A DNA double helix on a deep navy field">
+  <!--
+    VarientLens landing imagery -- hero.
+    Placeholder artwork, drawn in the product palette. Replace by dropping a
+    photograph into frontend/images/landing/ and pointing landingImages.hero at
+    it in app.js; the frame crops with object-fit:cover, so any aspect works.
+  -->
+  <defs>
+    <linearGradient id="heroBg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0B1C34"/>
+      <stop offset="0.55" stop-color="#142B4A"/>
+      <stop offset="1" stop-color="#102541"/>
+    </linearGradient>
+
+    <radialGradient id="heroGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5C8AD4" stop-opacity="0.46"/>
+      <stop offset="0.55" stop-color="#3F5F9A" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="heroStrand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="0.22" stop-color="#CFE0F7"/>
+      <stop offset="0.72" stop-color="#8FB0E0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/>
+    </linearGradient>
+
+    <linearGradient id="heroRung" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7FA2D8"/>
+      <stop offset="0.5" stop-color="#E2ECFA"/>
+      <stop offset="1" stop-color="#7FA2D8"/>
+    </linearGradient>
+
+    <radialGradient id="heroVignette" cx="0.5" cy="0.5" r="0.74">
+      <stop offset="0.42" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#061223" stop-opacity="0.62"/>
+    </radialGradient>
+
+    <pattern id="heroGrid" width="100" height="100" patternUnits="userSpaceOnUse">
+      <path d="M100,0 H0 V100" fill="none" stroke="#8FB0E0" stroke-width="1"/>
+    </pattern>
+
+    <!-- Base pairs drawn behind the strands: the short ones sit near a crossing
+         and read as passing behind. One half-wave unit, reused four times. -->
+    <g id="heroRungsBack" stroke="url(#heroRung)" stroke-width="2" stroke-linecap="round" opacity="0.3">
+      <line x1="-37" y1="13.75" x2="37" y2="13.75"/>
+      <line x1="-106" y1="41.25" x2="106" y2="41.25"/>
+      <line x1="-106" y1="178.75" x2="106" y2="178.75"/>
+      <line x1="-37" y1="206.25" x2="37" y2="206.25"/>
+    </g>
+    <g id="heroRungsFront" stroke="url(#heroRung)" stroke-width="3" stroke-linecap="round" opacity="0.88">
+      <line x1="-158" y1="68.75" x2="158" y2="68.75"/>
+      <line x1="-186" y1="96.25" x2="186" y2="96.25"/>
+      <line x1="-186" y1="123.75" x2="186" y2="123.75"/>
+      <line x1="-158" y1="151.25" x2="158" y2="151.25"/>
+    </g>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#heroBg)"/>
+  <rect width="1600" height="1000" fill="url(#heroGrid)" opacity="0.07"/>
+  <ellipse cx="800" cy="500" rx="600" ry="500" fill="url(#heroGlow)"/>
+
+  <!-- Sequence tracks: horizontal rules with tick marks, at three depths. -->
+  <g stroke="#8FB0E0" fill="none">
+    <path d="M0,168 H1600" stroke-width="1" opacity="0.1"/>
+    <path d="M0,392 H1600" stroke-width="1" opacity="0.14"/>
+    <path d="M0,616 H1600" stroke-width="1" opacity="0.14"/>
+    <path d="M0,840 H1600" stroke-width="1" opacity="0.1"/>
+  </g>
+  <g stroke="#8FB0E0" stroke-width="1" opacity="0.2">
+    <path d="M120,160 V176 M280,160 V176 M440,160 V176 M600,160 V176 M760,160 V176 M920,160 V176 M1080,160 V176 M1240,160 V176 M1400,160 V176"/>
+    <path d="M120,608 V624 M280,608 V624 M440,608 V624 M600,608 V624 M760,608 V624 M920,608 V624 M1080,608 V624 M1240,608 V624 M1400,608 V624"/>
+  </g>
+
+  <!-- The helix. Two mirrored backbones over four half-waves. -->
+  <g transform="translate(800,44)">
+    <use href="#heroRungsBack"/>
+    <use href="#heroRungsBack" y="220"/>
+    <use href="#heroRungsBack" y="440"/>
+    <use href="#heroRungsBack" y="660"/>
+    <use href="#heroRungsFront"/>
+    <use href="#heroRungsFront" y="220"/>
+    <use href="#heroRungsFront" y="440"/>
+    <use href="#heroRungsFront" y="660"/>
+
+    <path d="M0,0 c253.3,80.1 253.3,139.9 0,220
+             c-253.3,80.1 -253.3,139.9 0,220
+             c253.3,80.1 253.3,139.9 0,220
+             c-253.3,80.1 -253.3,139.9 0,220"
+          fill="none" stroke="url(#heroStrand)" stroke-width="10" stroke-linecap="round"/>
+    <path d="M0,0 c-253.3,80.1 -253.3,139.9 0,220
+             c253.3,80.1 253.3,139.9 0,220
+             c-253.3,80.1 -253.3,139.9 0,220
+             c253.3,80.1 253.3,139.9 0,220"
+          fill="none" stroke="url(#heroStrand)" stroke-width="10" stroke-linecap="round"
+          opacity="0.66"/>
+  </g>
+
+  <rect width="1600" height="1000" fill="url(#heroVignette)"/>
+</svg>

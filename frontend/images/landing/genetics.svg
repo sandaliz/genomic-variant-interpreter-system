@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Chromosome ideograms with a highlighted locus">
+  <!-- VarientLens landing imagery -- genetic insight. -->
+  <defs>
+    <linearGradient id="chBg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#0E2340"/>
+      <stop offset="0.6" stop-color="#142B4A"/>
+      <stop offset="1" stop-color="#0B1C34"/>
+    </linearGradient>
+    <radialGradient id="chGlow" cx="0.5" cy="0.45" r="0.55">
+      <stop offset="0" stop-color="#4E7BC4" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#4E7BC4" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Banding: a base stain with a darker band across it, the way a Giemsa
+         ideogram reads. Two pitches so neighbouring chromosomes do not match. -->
+    <pattern id="chBandA" width="8" height="36" patternUnits="userSpaceOnUse">
+      <rect width="8" height="36" fill="#2B4877"/>
+      <rect width="8" height="20" fill="#5C82BC" opacity="0.88"/>
+    </pattern>
+    <pattern id="chBandB" width="8" height="52" patternUnits="userSpaceOnUse">
+      <rect width="8" height="52" fill="#24406B"/>
+      <rect width="8" height="17" fill="#4F76B4" opacity="0.9"/>
+      <rect y="30" width="8" height="8" fill="#7FA2D8" opacity="0.65"/>
+    </pattern>
+    <linearGradient id="chLocus" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#D9A441" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#F0C877"/>
+      <stop offset="1" stop-color="#D9A441" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="chGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#8FB0E0" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#chBg)"/>
+  <rect width="1200" height="900" fill="url(#chGrid)" opacity="0.055"/>
+  <ellipse cx="600" cy="420" rx="560" ry="420" fill="url(#chGlow)"/>
+
+  <!-- A shared baseline and two reference rules, so the set reads as a plate. -->
+  <g stroke="#8FB0E0" fill="none">
+    <path d="M60,90 H1140" stroke-width="1" opacity="0.16"/>
+    <path d="M60,660 H1140" stroke-width="1" opacity="0.16"/>
+  </g>
+
+  <!-- Five chromosomes. Arms are separate rects with a waist between them; the
+       rounded ends come from rx, the flat inner ends from the gap. -->
+  <g>
+    <!-- 1 -->
+    <rect x="152" y="130" width="64" height="150" rx="30" fill="url(#chBandA)"/>
+    <rect x="152" y="292" width="64" height="292" rx="30" fill="url(#chBandB)"/>
+    <!-- 2 -->
+    <rect x="372" y="110" width="76" height="188" rx="36" fill="url(#chBandB)"/>
+    <rect x="372" y="310" width="76" height="340" rx="36" fill="url(#chBandA)"/>
+    <!-- 3 -->
+    <rect x="592" y="156" width="58" height="130" rx="28" fill="url(#chBandA)"/>
+    <rect x="592" y="298" width="58" height="252" rx="28" fill="url(#chBandB)"/>
+    <!-- 4 -->
+    <rect x="812" y="126" width="70" height="168" rx="33" fill="url(#chBandB)"/>
+    <rect x="812" y="306" width="70" height="310" rx="33" fill="url(#chBandA)"/>
+    <!-- 5 -->
+    <rect x="1016" y="146" width="64" height="144" rx="30" fill="url(#chBandA)"/>
+    <rect x="1016" y="302" width="64" height="272" rx="30" fill="url(#chBandB)"/>
+  </g>
+
+  <!-- The locus under study: one band lit, called out across the plate. -->
+  <g>
+    <rect x="372" y="452" width="76" height="18" rx="3" fill="#F0C877" opacity="0.9"/>
+    <rect x="330" y="455" width="200" height="12" fill="url(#chLocus)" opacity="0.5"/>
+    <path d="M320,461 H420" stroke="#F0C877" stroke-width="1" opacity="0.55"/>
+    <circle cx="410" cy="461" r="3" fill="#F0C877"/>
+    <circle cx="410" cy="461" r="9" fill="#F0C877" opacity="0.18"/>
+  </g>
+
+  <!-- Reference ticks along the baseline. -->
+  <g stroke="#8FB0E0" stroke-width="1" opacity="0.22">
+    <path d="M180,660 V676 M400,660 V676 M620,660 V676 M840,660 V676 M1040,660 V676"/>
+    <path d="M180,74 V90 M400,74 V90 M620,74 V90 M840,74 V90 M1040,74 V90"/>
+  </g>
+</svg>

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Aligned sequencing reads with one variant position highlighted">
+  <!-- VarientLens landing imagery -- variant analysis. -->
+  <defs>
+    <linearGradient id="vaBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#102541"/>
+      <stop offset="0.6" stop-color="#142B4A"/>
+      <stop offset="1" stop-color="#0D2039"/>
+    </linearGradient>
+    <linearGradient id="vaRead" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.55"/>
+      <stop offset="0.5" stop-color="#6285C0" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="vaRead2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2E4A7C" stop-opacity="0.5"/>
+      <stop offset="0.5" stop-color="#526FA8" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#2E4A7C" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="vaBand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8FB0E0" stop-opacity="0"/>
+      <stop offset="0.2" stop-color="#8FB0E0" stop-opacity="0.16"/>
+      <stop offset="0.8" stop-color="#8FB0E0" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#8FB0E0" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="vaGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#8FB0E0" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#vaBg)"/>
+  <rect width="1200" height="900" fill="url(#vaGrid)" opacity="0.06"/>
+
+  <!-- The variant column: the one position every read is being compared at. -->
+  <rect x="572" y="80" width="56" height="660" fill="url(#vaBand)"/>
+  <path d="M600,80 V740" stroke="#BCD3F2" stroke-width="1.4" opacity="0.45"/>
+  <path d="M600,80 V740" stroke="#BCD3F2" stroke-width="6" opacity="0.07"/>
+
+  <!-- Stacked reads. Length and offset vary the way real coverage does. -->
+  <g>
+    <rect x="90"  y="120" width="900"  height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="150" y="164" width="960"  height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="60"  y="208" width="1020" height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="200" y="252" width="880"  height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="110" y="296" width="980"  height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="240" y="340" width="840"  height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="80"  y="384" width="1000" height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="170" y="428" width="920"  height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="300" y="472" width="760"  height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="120" y="516" width="970"  height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="210" y="560" width="870"  height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="70"  y="604" width="1010" height="20" rx="3" fill="url(#vaRead2)"/>
+    <rect x="260" y="648" width="800"  height="20" rx="3" fill="url(#vaRead)"/>
+    <rect x="140" y="692" width="940"  height="20" rx="3" fill="url(#vaRead2)"/>
+  </g>
+
+  <!-- Bases called at that column. Three agree with the reference; two carry the
+       alternate allele, which is what the amber marks are saying. -->
+  <g>
+    <rect x="590" y="164" width="20" height="20" rx="2" fill="#DCE8F9" opacity="0.9"/>
+    <rect x="590" y="208" width="20" height="20" rx="2" fill="#D9A441"/>
+    <rect x="590" y="296" width="20" height="20" rx="2" fill="#DCE8F9" opacity="0.9"/>
+    <rect x="590" y="384" width="20" height="20" rx="2" fill="#D9A441"/>
+    <rect x="590" y="472" width="20" height="20" rx="2" fill="#DCE8F9" opacity="0.9"/>
+    <rect x="590" y="560" width="20" height="20" rx="2" fill="#DCE8F9" opacity="0.9"/>
+    <rect x="590" y="648" width="20" height="20" rx="2" fill="#D9A441"/>
+  </g>
+
+  <!-- Coverage depth across the region. -->
+  <path d="M40,878 H1160" stroke="#8FB0E0" stroke-width="1" opacity="0.22"/>
+  <g fill="#526FA8" opacity="0.72">
+    <rect x="48"   y="848" width="34" height="22"/>
+    <rect x="94"   y="836" width="34" height="34"/>
+    <rect x="140"  y="840" width="34" height="30"/>
+    <rect x="186"  y="824" width="34" height="46"/>
+    <rect x="232"  y="812" width="34" height="58"/>
+    <rect x="278"  y="820" width="34" height="50"/>
+    <rect x="324"  y="806" width="34" height="64"/>
+    <rect x="370"  y="800" width="34" height="70"/>
+    <rect x="416"  y="808" width="34" height="62"/>
+    <rect x="462"  y="816" width="34" height="54"/>
+    <rect x="508"  y="804" width="34" height="66"/>
+    <rect x="554"  y="812" width="34" height="58"/>
+    <rect x="600"  y="822" width="34" height="48"/>
+    <rect x="646"  y="810" width="34" height="60"/>
+    <rect x="692"  y="800" width="34" height="70"/>
+    <rect x="738"  y="806" width="34" height="64"/>
+    <rect x="784"  y="818" width="34" height="52"/>
+    <rect x="830"  y="826" width="34" height="44"/>
+    <rect x="876"  y="814" width="34" height="56"/>
+    <rect x="922"  y="822" width="34" height="48"/>
+    <rect x="968"  y="832" width="34" height="38"/>
+    <rect x="1014" y="840" width="34" height="30"/>
+    <rect x="1060" y="846" width="34" height="24"/>
+    <rect x="1106" y="852" width="34" height="18"/>
+  </g>
+</svg>

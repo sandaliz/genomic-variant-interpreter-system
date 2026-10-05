@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A ranked evidence list with a relevance score for each record">
+  <!-- VarientLens landing imagery -- evidence you can check. -->
+  <defs>
+    <linearGradient id="s1Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#F2F6FB"/>
+      <stop offset="0.6" stop-color="#E6EDF6"/>
+      <stop offset="1" stop-color="#DCE5F1"/>
+    </linearGradient>
+    <filter id="s1Shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#142B4A" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="s1Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#3F5F9A" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#s1Bg)"/>
+  <rect width="1200" height="900" fill="url(#s1Grid)" opacity="0.07"/>
+
+  <g filter="url(#s1Shadow)">
+    <rect x="110" y="90" width="980" height="720" rx="10" fill="#FFFFFF"/>
+  </g>
+
+  <rect x="142" y="140" width="132" height="10" rx="5" fill="#C6CEDA"/>
+  <rect x="142" y="164" width="76" height="8" rx="4" fill="#E1E6EE"/>
+  <path d="M142,190 H1058" stroke="#D6DAE0" stroke-width="1"/>
+
+  <!-- Five ranked records. The score bars shorten down the list, which is the
+       whole point of the panel: relevance is visible, not implied. -->
+  <g>
+    <circle cx="180" cy="242" r="17" fill="#E9EEF6"/>
+    <rect x="216" y="228" width="176" height="12" rx="6" fill="#1B3A61"/>
+    <rect x="216" y="254" width="118" height="16" rx="8" fill="#EAF2ED"/>
+    <rect x="620" y="236" width="300" height="10" rx="5" fill="#E9EEF0"/>
+    <rect x="620" y="236" width="300" height="10" rx="5" fill="#3F5F9A"/>
+    <rect x="948" y="230" width="86" height="22" rx="11" fill="#1B3A61"/>
+    <path d="M142,296 H1058" stroke="#EDF0F5" stroke-width="1"/>
+  </g>
+  <g>
+    <circle cx="180" cy="346" r="17" fill="#E9EEF6"/>
+    <rect x="216" y="332" width="152" height="12" rx="6" fill="#1B3A61"/>
+    <rect x="216" y="358" width="104" height="16" rx="8" fill="#E9EEF6"/>
+    <rect x="620" y="340" width="300" height="10" rx="5" fill="#E9EEF0"/>
+    <rect x="620" y="340" width="284" height="10" rx="5" fill="#3F5F9A" opacity="0.9"/>
+    <rect x="962" y="334" width="72" height="22" rx="11" fill="#1B3A61" opacity="0.85"/>
+    <path d="M142,400 H1058" stroke="#EDF0F5" stroke-width="1"/>
+  </g>
+  <g>
+    <circle cx="180" cy="450" r="17" fill="#E9EEF6"/>
+    <rect x="216" y="436" width="188" height="12" rx="6" fill="#1B3A61"/>
+    <rect x="216" y="462" width="132" height="16" rx="8" fill="#E9EEF6"/>
+    <rect x="620" y="444" width="300" height="10" rx="5" fill="#E9EEF0"/>
+    <rect x="620" y="444" width="256" height="10" rx="5" fill="#3F5F9A" opacity="0.8"/>
+    <rect x="980" y="438" width="54" height="22" rx="11" fill="#1B3A61" opacity="0.7"/>
+    <path d="M142,504 H1058" stroke="#EDF0F5" stroke-width="1"/>
+  </g>
+  <g>
+    <circle cx="180" cy="554" r="17" fill="#E9EEF6"/>
+    <rect x="216" y="540" width="140" height="12" rx="6" fill="#1B3A61"/>
+    <rect x="216" y="566" width="96" height="16" rx="8" fill="#FBF1DE"/>
+    <rect x="620" y="548" width="300" height="10" rx="5" fill="#E9EEF0"/>
+    <rect x="620" y="548" width="208" height="10" rx="5" fill="#3F5F9A" opacity="0.68"/>
+    <rect x="1000" y="542" width="34" height="22" rx="11" fill="#1B3A61" opacity="0.5"/>
+    <path d="M142,608 H1058" stroke="#EDF0F5" stroke-width="1"/>
+  </g>
+  <g>
+    <circle cx="180" cy="658" r="17" fill="#E9EEF6"/>
+    <rect x="216" y="644" width="164" height="12" rx="6" fill="#1B3A61"/>
+    <rect x="216" y="670" width="112" height="16" rx="8" fill="#E9EEF6"/>
+    <rect x="620" y="652" width="300" height="10" rx="5" fill="#E9EEF0"/>
+    <rect x="620" y="652" width="162" height="10" rx="5" fill="#3F5F9A" opacity="0.55"/>
+    <rect x="1010" y="646" width="24" height="22" rx="11" fill="#1B3A61" opacity="0.4"/>
+  </g>
+
+  <path d="M142,716 H1058" stroke="#D6DAE0" stroke-width="1"/>
+  <rect x="142" y="744" width="220" height="10" rx="5" fill="#DCE2EB"/>
+  <rect x="900" y="740" width="158" height="18" rx="9" fill="#E9EEF6"/>
+</svg>

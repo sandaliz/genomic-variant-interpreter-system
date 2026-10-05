@@ -824,7 +824,7 @@ class TestFrontendDeepLinks:
     def test_view_slugs_serve_the_app(self, client, slug):
         response = client.get(slug)
         assert response.status_code == 200, slug
-        assert "VariantLens" in response.text
+        assert "VarientLens" in response.text
         assert "text/html" in response.headers["content-type"]
 
     @pytest.mark.parametrize("slug", ["/nonsense", "/does-not-exist", "/admin",
