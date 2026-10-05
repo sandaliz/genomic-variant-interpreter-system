@@ -73,11 +73,8 @@ _GENE_BEFORE_HGVS = re.compile(
     r"\b([A-Z]{2,}[0-9]*)\s+(NC_[0-9]+\.[0-9]+:g\.[0-9]+[A-Za-z>]+)"
 )
 
-# Intent classification patterns
-_INTENT_PATTERNS = {
-    "classification": re.compile(r"\b(pathogenic|pwp|pathogenic|benign|deleterious|disease|disease risk|cancer risk|harmful|cause cancer|clinical significance)\b", re.IGNORECASE),
-    "gene_search": re.compile(r"\b(variants?|mutations?|changes?|polymorphisms?)\b.*\b(in|of|for)\b\s+\w+", re.IGNORECASE),
-}
+# Intent labels are derived from the query type (see _determine_intent), not from
+# keyword matching, so there is no pattern table to maintain here.
 
 
 class IntakeAgent:

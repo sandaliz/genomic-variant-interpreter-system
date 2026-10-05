@@ -17,6 +17,10 @@
     --focus:#0E5C52;
     --panel-dim:#F1EFE7;
     --wash:#EDE9DC;
+    /* Height of the sticky site header (64px inner + 1px rule). The workspace
+       rail and the app grid both subtract it, so the two scroll regions can
+       never overlap the header the way a bare top:0 did. */
+    --header-h:65px;
     font-family:'Manrope',system-ui,sans-serif;
   }
   *{box-sizing:border-box;}
@@ -26,6 +30,8 @@
      what makes "hidden" mean hidden everywhere rather than per-component. */
   .hidden{display:none !important;}
   html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);}
+  /* Anchor jumps land below the sticky header instead of under it. */
+  html{scroll-behavior:smooth;scroll-padding-top:calc(var(--header-h) + 16px);}
   body{min-height:100vh;-webkit-font-smoothing:antialiased;}
   ::selection{background:#CFE4DE;}
   a{color:var(--accent);}
@@ -33,24 +39,48 @@
   :focus-visible{outline:2px solid var(--focus);outline-offset:2px;}
   .mono{font-family:'JetBrains Mono',monospace;}
 
-  .app{display:grid;grid-template-columns:340px 1fr;min-height:100vh;}
-  @media (max-width:880px){ .app{grid-template-columns:1fr;} }
+  /* A wider rail than this grid strictly needs. At the previous width the kbd
+     hint, the disclaimer and the longest example each wrapped onto an extra
+     line, and the rail is a fixed-height column -- so every one of those wrapped
+     lines is a line the reader has to scroll the rail to reach. Width is what
+     buys the height back. clamp() rather than one constant for two reasons: a
+     very large display spends the surplus on the report column instead of
+     stretching the query box, and the 30vw share lets the rail give width back
+     on a small laptop before it has to give up and stack. */
+  .app{display:grid;grid-template-columns:clamp(376px,30vw,468px) 1fr;
+    min-height:calc(100vh - var(--header-h));}
+  /* Below this the two columns stop earning their keep -- a 376px rail leaves
+     the report less room than it needs -- so stack instead. */
+  @media (max-width:980px){ .app{grid-template-columns:1fr;} }
 
-  /* ---- Left rail ---- */
+  /* Sticky, and scrolled internally only when the content genuinely does not
+     fit. On a normal laptop viewport the trimmed spacing and the wider column
+     together bring the whole rail in under the fold, so no rail scrollbar
+     appears and the report column is the only thing that scrolls -- which is
+     the point of pinning it. Shorter viewports fall back to a scrollbar on the
+     rail rather than to hiding the disclaimer, and under 980px the whole
+     arrangement stacks. The scrollbar is the degradation, not a defect. */
   .rail{
     background:var(--panel);
     border-right:1px solid var(--line);
-    padding:28px 26px 32px;
-    position:sticky; top:0; height:100vh; overflow-y:auto;
+    padding:26px 24px 28px;
+    /* Sticks directly under the site header, not at the viewport top: at top:0
+       the header (z-index 60) covered the rail's own first 64px, so the brand
+       and the top of the query box slid out of sight as the page scrolled. */
+    position:sticky; top:var(--header-h); height:calc(100vh - var(--header-h));
+    overflow-y:auto; overscroll-behavior:contain;
   }
-  @media (max-width:880px){ .rail{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line);} }
+  @media (max-width:980px){
+    .rail{position:static;top:auto;height:auto;overflow:visible;
+      border-right:none;border-bottom:1px solid var(--line);}
+  }
 
   .brand{display:flex;align-items:baseline;gap:10px;margin-bottom:2px;}
   .brand-mark{width:9px;height:9px;border-radius:1px;background:var(--accent);flex:none;transform:rotate(45deg);}
   .brand h1{font-size:17px;font-weight:800;margin:0;letter-spacing:-0.01em;}
 
   textarea#query{
-    width:100%;min-height:110px;resize:vertical;border:1px solid var(--line-strong);
+    width:100%;min-height:104px;resize:vertical;border:1px solid var(--line-strong);
     border-radius:5px;background:#fff;padding:12px 13px;font-size:13.5px;line-height:1.6;
     color:var(--ink);transition:border-color .12s,box-shadow .12s;
   }
@@ -59,27 +89,37 @@
     box-shadow:0 0 0 3px rgba(14,92,82,.12);}
   textarea#query::placeholder{color:var(--ink-faint);}
 
-  .examples{margin-top:16px;}
+  /* One per row, deliberately. Two-up would halve the height of the tallest
+     block in the rail, and the rail is a fixed-height column, so the saving is
+     real -- but the HGVS in the first example ("NC_000017.10:g.41244442A>G") is
+     a single 26-character token with no break opportunity in it, and it does not
+     fit the ~138px half-width at the narrow end of the clamp. The grid would
+     then have to break the expression mid-token, which is the one string on
+     this page a reader might copy. Wrapping the whole example onto two lines
+     costs less than mangling it, so the buttons stay full width. */
+  .examples{margin-top:16px;display:grid;gap:8px;grid-template-columns:1fr;}
   .ex-btn{
-    display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--line);
-    border-radius:4px;padding:10px 12px;margin-bottom:8px;font-size:12.5px;
+    display:block;width:100%;text-align:left;background:transparent;
+    border:1px solid var(--line);
+    border-radius:4px;padding:10px 12px;font-size:12.5px;
     color:var(--ink-soft);cursor:pointer;font-family:inherit;line-height:1.5;
     transition:border-color .12s, color .12s, background .12s;
   }
   .ex-btn:hover{border-color:var(--accent);color:var(--ink);background:rgba(14,92,82,.03);}
-  .ex-btn:last-child{margin-bottom:0;}
 
   #submitBtn{
-    margin-top:18px;width:100%;background:var(--accent);color:var(--accent-ink);border:none;
+    margin-top:16px;width:100%;background:var(--accent);color:var(--accent-ink);border:none;
     border-radius:5px;padding:12px 14px;font-size:13.5px;font-weight:700;cursor:pointer;
     font-family:inherit;transition:opacity .12s,box-shadow .12s;
   }
-  #submitBtn:hover{opacity:.92;}
+  #submitBtn:hover{opacity:.92;box-shadow:0 8px 20px -10px rgba(14,92,82,.65);}
   #submitBtn:disabled{opacity:.5;cursor:default;}
 
-  .rail-divider{height:1px;background:var(--line);margin:30px 0;}
+  /* Was 30px either side of the rule, which pushed the disclaimer off the
+     bottom of a laptop viewport on its own. */
+  .rail-divider{height:1px;background:var(--line);margin:20px 0;}
 
-  .rail-note{font-size:12.5px;line-height:1.7;color:var(--ink-soft);}
+  .rail-note{font-size:12.5px;line-height:1.65;color:var(--ink-soft);}
   .rail-note strong{color:var(--ink);font-weight:700;}
 
   /* ---- Plan badge + quota meter ---- */
@@ -237,7 +277,7 @@
   .fact-v.flag{color:var(--vus);}
 
   .criteria{display:flex;flex-wrap:wrap;gap:7px;}
-  .crit-chip{font-size:12.5px;background:#fff;border:1px solid var(--line-strong);border-radius:20px;
+  .crit-chip{position:relative;font-size:12.5px;background:#fff;border:1px solid var(--line-strong);border-radius:20px;
     padding:6px 12px;color:var(--ink-soft);}
   .crit-chip b{color:var(--ink);font-weight:700;}
 
@@ -337,7 +377,7 @@
 .btn-primary{background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent);
   border-radius:4px;padding:9px 16px;font-size:12.5px;font-weight:700;cursor:pointer;
   font-family:inherit;transition:opacity .12s,box-shadow .12s;line-height:1.4;}
-.btn-primary:hover{opacity:.92;}
+.btn-primary:hover{opacity:.92;box-shadow:0 8px 20px -10px rgba(14,92,82,.65);}
 .btn-primary:active{opacity:.85;}
 .btn-primary:disabled{opacity:.5;cursor:default;}
 /* Full-strength ink: --ink-soft on white is technically AA but reads as
@@ -349,7 +389,10 @@
 .btn-lg{padding:13px 24px;font-size:14px;border-radius:5px;}
 .view{animation:fade .16s ease-out;}
 @keyframes fade{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:none;}}
-@media (prefers-reduced-motion:reduce){ .view{animation:none;} }
+@media (prefers-reduced-motion:reduce){
+  .view{animation:none;}
+  html{scroll-behavior:auto;}
+}
 
 /* ---- Profile menu ---- */
 .profile-wrap{position:relative;}
@@ -495,7 +538,11 @@ input:disabled{background:#F1EFE7;color:var(--ink-faint);cursor:not-allowed;}
   color:var(--ink-faint);font-weight:700;margin-top:7px;}
 .stat-card.alert{background:var(--vus-bg);border-color:#E4C89A;}
 .stat-card.alert .stat-label{color:#7A4E07;}
-.chart{display:flex;align-items:flex-end;gap:2px;height:120px;
+/* The plot row is its own flex box so the date axis can sit *under* the bars.
+   When the container was the flex row, the axis was laid out as one more item in
+   it and ended up beside the last bars instead of beneath them. */
+.chart{display:block;height:auto;}
+.chart-plot{display:flex;align-items:flex-end;gap:2px;
   border-bottom:1px solid var(--line-strong);padding-bottom:1px;}
 .chart-col{flex:1;background:var(--accent);min-height:2px;border-radius:1px 1px 0 0;
   opacity:.85;}
@@ -803,3 +850,320 @@ input:disabled{background:#F1EFE7;color:var(--ink-faint);cursor:not-allowed;}
   .report-head{border-bottom:2px solid #000;}
 }
 .landing-foot p{font-size:12px;color:var(--ink-soft);line-height:1.75;margin:0;}
+
+/* ==========================================================================
+   Product polish: the rail's own header and quota meter, keyboard hints, the
+   agentic control-plane panel, and transient confirmations.
+   Cut from the tokens declared at the top of this file -- no new colours, no
+   new typeface -- so these surfaces sit in the same visual system as the report.
+   ========================================================================== */
+
+/* ---- Rail header ----
+   The rail opened on a bare "Query" label, which read as an unstyled textarea
+   rather than the tool's control surface. */
+.rail-head{margin-bottom:14px;}
+.rail-title{font-size:15.5px;font-weight:800;letter-spacing:-.015em;margin:3px 0 5px;
+  line-height:1.3;}
+.rail-sub{font-size:12px;line-height:1.6;color:var(--ink-faint);margin:0;}
+
+/* The quota, shown where it is actually spent: on the screen where a query
+   costs one. Previously it was only visible inside the avatar menu. */
+.rail-usage{background:var(--paper);border:1px solid var(--line);border-radius:5px;
+  padding:11px 12px;margin-top:14px;}
+.rail-usage-head{display:flex;align-items:center;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;}
+.rail-usage-text{font-size:11px;color:var(--ink-faint);font-variant-numeric:tabular-nums;}
+
+.kbd-hint{margin:10px 0 0;font-size:11px;line-height:1.8;color:var(--ink-faint);}
+.kbd-hint kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:#fff;
+  border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:3px;
+  padding:1px 5px;color:var(--ink-soft);}
+
+/* ---- Agentic control plane ----
+   The Supervisor's plan and the Verifier's verdict, rendered as two panels under
+   the verdict they produced. This is the part of the pipeline that is *not* a
+   fixed chain, so it gets its own block rather than being buried in the
+   technical detail. */
+.agentic-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));
+  gap:14px;}
+.ag-card{border:1px solid var(--line);border-radius:6px;background:var(--panel);
+  padding:16px 18px;box-shadow:0 1px 2px rgba(33,31,26,.03);}
+.ag-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:13px;}
+.ag-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--ink-soft);font-weight:800;}
+.ag-tag{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
+  padding:3px 9px;border-radius:20px;background:rgba(14,92,82,.1);color:var(--accent);
+  white-space:nowrap;}
+.ag-tag.warn{background:var(--vus-bg);color:#7A4E07;}
+.ag-rows{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;margin-bottom:12px;}
+.ag-row{display:flex;justify-content:space-between;gap:12px;background:var(--panel);
+  padding:8px 11px;font-size:12.5px;}
+.ag-k{color:var(--ink-soft);}
+.ag-v{font-weight:700;text-align:right;min-width:0;word-break:break-word;}
+.ag-reason{font-size:12.5px;line-height:1.65;color:var(--ink-soft);margin:0;}
+.ag-checks{list-style:none;margin:0;padding:0;display:grid;gap:7px;}
+.ag-check{font-size:12.5px;line-height:1.5;color:var(--ink-soft);padding-left:19px;
+  position:relative;}
+.ag-check::before{content:"\2713";position:absolute;left:0;top:-1px;color:var(--benign);
+  font-weight:800;}
+/* A check that failed and one that was simply not required look different,
+   because "no predictors available" is not the same as "the claim is unsupported". */
+.ag-check.fail{color:var(--pathogenic);font-weight:600;}
+.ag-check.fail::before{content:"!";color:var(--pathogenic);}
+.ag-check.skip{color:var(--ink-faint);}
+.ag-check.skip::before{content:"\2013";color:var(--line-strong);}
+.ag-issues{margin:12px 0 0;padding:11px 13px;border-radius:4px;background:var(--vus-bg);
+  border:1px solid #E4C89A;font-size:12.5px;line-height:1.6;color:#7A4E07;}
+.ag-note{margin-top:13px;padding-top:12px;border-top:1px dashed var(--line-strong);
+  font-size:12.5px;line-height:1.65;color:var(--ink-soft);}
+.ag-note b{color:var(--ink);}
+
+/* ---- Transient confirmations ----
+   Several actions used to complete in total silence -- copying the report,
+   downloading the PDF -- so a success was indistinguishable from a click that
+   missed. A toast says "that worked" without taking the page away. */
+.toast-wrap{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:200;
+  display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;}
+.toast{background:#2B2A24;color:#F2F0E6;font-size:12.5px;font-weight:600;
+  padding:10px 16px;border-radius:20px;max-width:min(460px,86vw);text-align:center;
+  line-height:1.5;box-shadow:0 8px 28px rgba(33,31,26,.28);opacity:0;
+  transform:translateY(6px);transition:opacity .18s ease,transform .18s ease;}
+.toast.show{opacity:1;transform:none;}
+.toast.err{background:var(--pathogenic);color:#fff;}
+@media (prefers-reduced-motion:reduce){
+  .toast{transition:none;transform:none;}
+}
+
+/* ==========================================================================
+   Product surfaces: the command palette, the confidence breakdown, the run
+   timeline, API keys and the compliance log.
+
+   Everything here is built from the tokens at the top of the file. The rule
+   throughout is that a surface only shows a number it can explain -- the
+   confidence panel names its inputs, the timeline shows what actually ran, and
+   the key card never pretends a lost secret is recoverable.
+   ========================================================================== */
+
+/* ---- Command palette (Cmd/Ctrl+K) ---- */
+.palette-btn{display:inline-flex;align-items:center;gap:7px;}
+.palette-card{width:min(560px,94vw);max-width:min(560px,94vw);padding:14px;}
+.palette-input{width:100%;height:44px;font-size:14.5px;padding:0 14px;
+  border:1px solid var(--line-strong);border-radius:5px;background:#fff;}
+.palette-input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(14,92,82,.13);}
+.palette-list{max-height:52vh;overflow-y:auto;margin-top:10px;}
+.palette-item{display:grid;grid-template-columns:72px 1fr;gap:2px 12px;width:100%;
+  text-align:left;background:transparent;border:1px solid transparent;border-radius:5px;
+  padding:9px 11px;cursor:pointer;}
+.palette-item.palette-active{background:#fff;border-color:var(--line-strong);}
+.palette-kind{grid-row:span 2;font-size:9.5px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--ink-faint);padding-top:3px;}
+.palette-label{font-size:13.5px;font-weight:700;color:var(--ink);min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.palette-desc{font-size:11.5px;color:var(--ink-faint);min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.palette-hint{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;padding-top:11px;
+  border-top:1px solid var(--line);font-size:11px;color:var(--ink-faint);}
+.palette-key{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;
+  background:var(--paper);border:1px solid var(--line-strong);border-radius:3px;
+  padding:1px 5px;color:var(--ink-soft);}
+.palette-empty{padding:22px 12px;text-align:center;font-size:13px;color:var(--ink-faint);}
+
+/* ---- Confidence breakdown ----
+   A plain bar says "72"; this says 72 out of what. The gauge carries the total,
+   the bars carry the inputs the score was computed from, and the note names who
+   checked it -- the same discipline the report text has always applied. */
+.conf-breakdown{margin-top:16px;padding-top:15px;border-top:1px solid var(--line);}
+.cb-grid{display:flex;gap:22px;align-items:center;flex-wrap:wrap;}
+.cb-fig{position:relative;flex:none;width:76px;height:76px;}
+.cb-svg{display:block;transform:rotate(-90deg);}
+.cb-ring{fill:none;stroke:var(--line);stroke-width:6;}
+.cb-arc{fill:none;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .6s ease;}
+.cb-fig-value{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:19px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;}
+.cb-comps{flex:1 1 240px;min-width:0;display:grid;gap:11px;}
+.cb-comp-head{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;
+  margin-bottom:5px;}
+.cb-comp-name{color:var(--ink-soft);}
+.cb-comp-val{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.cb-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;}
+.cb-bar-fill{height:100%;background:var(--accent);border-radius:3px;
+  transition:width .5s ease;}
+.cb-tags{display:flex;gap:7px;flex-wrap:wrap;}
+.cb-tag{font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;
+  background:rgba(14,92,82,.09);color:var(--accent);}
+.cb-tag.warn{background:var(--vus-bg);color:#7A4E07;}
+.cb-note{font-size:11.5px;line-height:1.6;color:var(--ink-faint);margin:14px 0 0;}
+
+/* ---- Run timeline ----
+   The pipeline as it actually executed, in order -- including a second
+   classification pass when the verifier sent the first one back. A fixed list of
+   six boxes would describe the design; this describes the run. */
+.tl{margin-bottom:16px;border-left:2px solid var(--line);padding-left:0;}
+.tl-step{display:flex;gap:12px;padding:0 0 14px 14px;position:relative;}
+.tl-step:last-child{padding-bottom:0;}
+.tl-dot{position:absolute;left:-7px;top:4px;width:12px;height:12px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--panel);box-sizing:border-box;}
+.tl-step.tl-revised .tl-dot{background:var(--vus);}
+.tl-body{min-width:0;}
+.tl-name{font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;
+  flex-wrap:wrap;}
+.tl-detail{font-size:11.5px;color:var(--ink-faint);margin-top:3px;line-height:1.55;}
+.tl-badge{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
+  background:var(--vus-bg);color:#7A4E07;border-radius:20px;padding:2px 8px;}
+
+/* ---- API keys ---- */
+.key-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  flex-wrap:wrap;padding:11px 13px;border:1px solid var(--line);border-radius:5px;
+  background:#fff;margin-bottom:8px;}
+.key-name{font-size:13.5px;font-weight:700;}
+.key-meta{font-size:11.5px;color:var(--ink-faint);margin-top:3px;line-height:1.5;}
+.key-actions{display:flex;align-items:center;gap:8px;}
+.key-revoke{background:transparent;border:1px solid #E3C4BF;color:var(--pathogenic);
+  font-size:12px;font-weight:700;border-radius:4px;padding:6px 11px;cursor:pointer;}
+.key-revoke:hover{background:var(--pathogenic-bg);}
+.keys-empty{font-size:12.5px;color:var(--ink-faint);padding:8px 0;}
+.key-reveal{margin-top:14px;padding:14px;border-radius:5px;background:var(--vus-bg);
+  border:1px solid #E4C89A;}
+.key-reveal-title{font-size:12.5px;font-weight:700;color:#7A4E07;margin:0 0 9px;}
+.key-reveal-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.key-reveal-row code{flex:1 1 220px;min-width:0;font-family:'JetBrains Mono',monospace;
+  font-size:12px;background:#fff;border:1px solid var(--line-strong);border-radius:4px;
+  padding:9px 11px;word-break:break-all;}
+
+/* ---- ACMG criterion chips ----
+   The popover is the Responsible-AI surface: it says what the code means in the
+   ACMG/AMP paper, and -- for the codes this project computes from its own data
+   rather than asserts -- that the criterion is applied as a proxy. */
+.chip-detail{color:var(--ink-faint);}
+.crit-chip.proxy{border-style:dashed;}
+.crit-chip.unknown{background:var(--paper);}
+.crit-chip:focus{outline:2px solid var(--focus);outline-offset:2px;}
+.chip-pop{position:absolute;left:0;top:calc(100% + 9px);width:min(330px,78vw);z-index:30;
+  display:block;text-align:left;background:var(--ink);color:#F2F0E6;border-radius:6px;
+  padding:12px 14px;box-shadow:0 12px 32px rgba(33,31,26,.3);opacity:0;visibility:hidden;
+  transition:opacity .14s ease;pointer-events:none;}
+.crit-chip:hover .chip-pop,.crit-chip:focus .chip-pop{opacity:1;visibility:visible;}
+.chip-pop-h{display:block;font-size:10px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.08em;color:#9FD3C7;margin-bottom:6px;}
+.chip-pop-p{display:block;font-size:11.5px;line-height:1.6;}
+.chip-pop-flag{margin-top:8px;padding-top:8px;border-top:1px solid rgba(242,240,230,.22);
+  color:#E7C99A;}
+
+/* ---- Compliance log ---- */
+.audit-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 8px;}
+.audit-controls .field-label{margin:0;}
+.audit-controls input{width:auto;flex:1 1 140px;min-width:0;}
+.audit-controls .btn-primary{flex:0 0 auto;}
+
+/* ==========================================================================
+   History and the pipeline diagram.
+
+   Three surfaces share one idea -- show the account its own work -- so they are
+   styled together: the workspace's recent-query list, the administrator's
+   per-account activity, and the landing page's interactive flow.
+   ========================================================================== */
+
+/* ---- Query history (workspace) ---- */
+.history-panel{margin-top:46px;border-top:1px solid var(--line);padding-top:26px;}
+.history-head{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:16px;margin-bottom:14px;flex-wrap:wrap;}
+.history-title{font-size:19px;font-weight:800;margin:5px 0 0;letter-spacing:-.01em;}
+.history-count{font-size:11.5px;color:var(--ink-faint);}
+.history-spark{display:flex;align-items:flex-end;gap:2px;height:46px;
+  border-bottom:1px solid var(--line-strong);padding-bottom:1px;margin-bottom:16px;}
+.spark-col{flex:1;background:var(--accent);opacity:.55;min-height:2px;border-radius:1px 1px 0 0;}
+.spark-col.zero{background:var(--line);opacity:1;}
+.history-list{display:flex;flex-direction:column;}
+.hist-row{display:flex;align-items:center;gap:14px;padding:12px 4px;
+  border-bottom:1px solid var(--line);}
+.hist-row:last-child{border-bottom:none;}
+.hist-row:hover{background:rgba(14,92,82,.035);}
+.hist-main{flex:1;min-width:0;}
+.hist-q{font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.hist-meta{font-size:11px;color:var(--ink-faint);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hist-badge{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:3px;
+  white-space:nowrap;background:var(--wash);color:var(--ink-soft);}
+.hist-badge.path{background:var(--pathogenic-bg);color:var(--pathogenic);}
+.hist-badge.benign{background:var(--benign-bg);color:var(--benign);}
+.hist-badge.vus{background:var(--vus-bg);color:var(--vus);}
+.hist-conf{font-size:11.5px;color:var(--ink-soft);min-width:46px;text-align:right;
+  font-variant-numeric:tabular-nums;}
+.hist-open{background:#fff;border:1px solid var(--line-strong);border-radius:4px;
+  padding:6px 12px;font-size:11.5px;font-weight:700;color:var(--ink);
+  cursor:pointer;font-family:inherit;white-space:nowrap;transition:border-color .12s,color .12s;}
+.hist-open:hover{border-color:var(--accent);color:var(--accent);}
+.hist-empty{font-size:12.5px;color:var(--ink-faint);padding:10px 2px;}
+
+/* ---- Per-account activity (admin) ---- */
+.acct-cell{display:flex;align-items:center;gap:9px;}
+.acct-spark{display:flex;align-items:flex-end;gap:1.5px;height:24px;width:124px;flex:none;}
+.acct-spark i{flex:1;background:var(--accent);opacity:.5;min-height:2px;border-radius:1px 1px 0 0;}
+.acct-spark i.zero{background:var(--line);opacity:1;}
+.acct-total{font-size:11px;color:var(--ink-faint);white-space:nowrap;
+  font-variant-numeric:tabular-nums;}
+.admin-table tbody tr.row-open{background:rgba(14,92,82,.05);}
+.acct-open{display:block;background:transparent;border:none;font-family:inherit;
+  font-size:11.5px;font-weight:700;color:var(--accent);cursor:pointer;padding:0;
+  margin-top:5px;}
+.acct-open:hover{text-decoration:underline;}
+/* Navigation that sits inside a sentence, e.g. "Open the admin dashboard" at the
+   end of the plan footnote. A real button, styled as a link. */
+.inline-link{background:none;border:none;padding:0;font:inherit;font-weight:700;
+  color:var(--accent);cursor:pointer;text-decoration:underline;}
+.inline-link:hover{color:var(--ink);}
+.account-detail{margin-top:20px;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:0 6px 6px 0;background:var(--panel);padding:18px 20px;}
+.acct-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;}
+.acct-name{font-size:15.5px;font-weight:800;letter-spacing:-.01em;}
+.acct-sub{font-size:11.5px;color:var(--ink-faint);margin-top:3px;word-break:break-all;}
+.acct-close{background:transparent;border:none;font-size:21px;line-height:1;color:var(--ink-faint);
+  cursor:pointer;padding:2px 6px;}
+.acct-close:hover{color:var(--ink);}
+.acct-chart{height:auto;}
+.acct-section{margin-top:18px;font-size:10px;font-weight:800;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--ink-faint);}
+.acct-body{font-size:13px;line-height:1.6;color:var(--ink-soft);}
+
+/* ---- Interactive pipeline diagram (landing) ---- */
+/* The wrapper carries the rhythm the old step grid used to get from its
+   grid gap, so the diagram sits at the same distance from the lede. */
+.flow{margin-top:22px;}
+.flow-wrap{position:relative;margin-top:4px;}
+.flow-track{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;}
+.flow-node{flex:1 1 148px;text-align:left;background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:13px 14px;cursor:pointer;font-family:inherit;
+  transition:border-color .14s,box-shadow .14s,transform .14s;}
+.flow-node:hover{border-color:var(--accent);transform:translateY(-2px);
+  box-shadow:0 5px 16px rgba(33,31,26,.07);}
+.flow-node.flow-active{border-color:var(--accent);background:#fff;
+  box-shadow:inset 0 0 0 1px var(--accent);}
+.flow-num{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--ink-faint);}
+.flow-node.flow-active .flow-num{color:var(--accent);}
+.flow-name{font-size:13px;font-weight:800;margin-top:6px;letter-spacing:-.01em;}
+.flow-role{font-size:11px;color:var(--ink-faint);margin-top:4px;line-height:1.5;}
+.flow-arrow{align-self:center;color:var(--line-strong);font-size:13px;flex:none;}
+.flow-loop-svg{position:absolute;left:0;right:0;bottom:-16px;height:36px;width:100%;
+  overflow:visible;pointer-events:none;}
+.flow-loop-svg path{fill:none;stroke:var(--vus);stroke-width:1.4;stroke-dasharray:4 3;}
+.flow-loop-label{font-size:11px;color:var(--ink-faint);text-align:center;margin:28px 0 0;}
+.flow-panel{margin-top:20px;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:0 6px 6px 0;background:var(--panel);padding:18px 20px;}
+.flow-panel-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+.flow-panel-name{font-size:15.5px;font-weight:800;}
+.flow-panel-role{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--accent);font-weight:800;}
+.flow-panel-body{font-size:13px;line-height:1.72;color:var(--ink-soft);margin:11px 0 0;}
+.flow-io{display:flex;gap:9px;flex-wrap:wrap;margin-top:15px;}
+.flow-chip{font-size:11.5px;background:#fff;border:1px solid var(--line-strong);
+  border-radius:999px;padding:5px 12px;color:var(--ink-soft);}
+.flow-chip b{color:var(--ink);font-weight:700;}
+.flow-status{margin-top:14px;font-size:11.5px;color:var(--ink-faint);}
+@media (max-width:900px){
+  .flow-loop-svg,.flow-loop-label{display:none;}
+}
+

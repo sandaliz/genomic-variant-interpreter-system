@@ -20,3 +20,7 @@ PyJWT==2.15.1
 jwcrypto==1.5.6
 pwdlib[argon2]==0.3.1
 email-validator==2.3.0
+# mcp>=1.0  # OPTIONAL: only needed to run mcp_server.py (the MCP tool server).
+#           # The REST API, the agents and the test suite do not require it --
+#           # mcp_server.py imports cleanly without it and build_server() reports
+#           # the missing package. Install with:  pip install mcp

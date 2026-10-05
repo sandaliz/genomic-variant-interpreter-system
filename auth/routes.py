@@ -38,6 +38,7 @@ from auth.security import (
     create_access_token,
     hash_password,
     verify_password,
+    verify_password_or_dummy,
 )
 from db.database import get_db
 from db.models import Plan, User
@@ -129,7 +130,12 @@ def login(
     # Emails are stored lower-cased (register and profile-update both do it), so
     # the lookup lower-cases too. A user pasting "Alice@X.com" still signs in.
     user = db.scalars(select(User).where(User.email == identifier)).one_or_none()
-    if user is None or not verify_password(body.password, user.password_hash):
+    # verify_password_or_dummy burns the same Argon2id work for "no such
+    # account" as for "wrong password", so response time cannot reveal which
+    # email addresses have accounts (the message was already identical).
+    if not verify_password_or_dummy(
+        body.password, user.password_hash if user is not None else None
+    ):
         # Identical response for "no such account" and "wrong password", so the
         # endpoint cannot be used to enumerate addresses. The audit record still
         # distinguishes them, which is the point of having one.
@@ -378,7 +384,7 @@ def change_password(
             detail="Current password is incorrect.")
     if verify_password(body.new_password, current_user.password_hash):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="New password must be different from the current one.")
 
     current_user.password_hash = hash_password(body.new_password)

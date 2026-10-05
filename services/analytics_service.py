@@ -151,6 +151,56 @@ def signoff_stats(db: Session, days: int = DEFAULT_DAYS) -> dict:
     }
 
 
+def daily_usage_by_user(db: Session, days: int = DEFAULT_DAYS) -> dict:
+    """
+    Per-account query counts over the window, one gap-filled series each.
+
+    One grouped query rather than one per account: the dashboard draws a
+    sparkline for every row of the accounts table, and N+1 queries to build N
+    sparklines is exactly the kind of thing that makes an admin page feel slow.
+
+    Counts come from usage_records, not the history log, so an account's graph
+    still covers runs made before the history table existed -- and so the graph,
+    the quota and the billing view can never tell three different stories.
+
+    Returns {user_id: {"series": [...], "total": int, "last_active": iso|None}}.
+    Accounts with no usage in the window are simply absent; the caller renders
+    an empty sparkline for them.
+    """
+    if days < 1 or days > 365:
+        days = DEFAULT_DAYS
+    start_date = (_now() - timedelta(days=days - 1)).date()
+
+    rows = db.execute(
+        select(
+            UsageRecord.user_id,
+            func.date(UsageRecord.created_at).label("day"),
+            func.coalesce(func.sum(UsageRecord.query_count), 0).label("queries"),
+        )
+        .where(UsageRecord.created_at >= start_date)
+        .group_by(UsageRecord.user_id, "day")
+    ).all()
+
+    counted: dict = {}
+    for user_id, day, queries in rows:
+        key = day if isinstance(day, date) else date.fromisoformat(str(day)[:10])
+        counted.setdefault(int(user_id), {})[key] = int(queries)
+
+    axis = [start_date + timedelta(days=offset) for offset in range(days)]
+    out = {}
+    for user_id, per_day in counted.items():
+        active_days = sorted(day for day, count in per_day.items() if count > 0)
+        out[str(user_id)] = {
+            "series": [
+                {"date": day.isoformat(), "queries": per_day.get(day, 0)}
+                for day in axis
+            ],
+            "total": sum(per_day.values()),
+            "last_active": active_days[-1].isoformat() if active_days else None,
+        }
+    return out
+
+
 def build_analytics(db: Session, days: int = DEFAULT_DAYS) -> dict:
     """The whole dashboard payload in one call."""
     return {

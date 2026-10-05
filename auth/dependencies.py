@@ -40,9 +40,44 @@ def bearer_token(request: Request) -> str:
     return token
 
 
-def get_current_user(
-    token: str = Depends(bearer_token), db: Session = Depends(get_db)
-) -> User:
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """
+    Resolve the caller, accepting either an API key or a session token.
+
+    Three credentials are understood, in this precedence order:
+
+      1. ``X-API-Key`` header -- a machine client on a plan with api_access. It is
+         not ambient, so no CSRF check applies.
+      2. ``Authorization: Bearer <token>`` -- the test suite, curl and scripted
+         integrations. Also not ambient.
+      3. the HttpOnly session cookie -- the browser. Ambient, so a CSRF token is
+         required for unsafe methods.
+
+    Whichever is used, the account row is re-read here, so deactivation revokes
+    access immediately even with an unexpired token or a live API key.
+    """
+    # --- API-key path (programmatic access) ---
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        from services.api_key_service import resolve_key
+
+        user = resolve_key(db, api_key)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, revoked or non-entitled API key.",
+            )
+        return user
+
+    # --- Session path (bearer token or cookie) ---
+    token, by_cookie = token_from_request(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization: Bearer <token> header, session cookie or X-API-Key.",
+        )
+    require_csrf(request, by_cookie)
+
     try:
         claims = decode_access_token(token)
     except TokenError as exc:

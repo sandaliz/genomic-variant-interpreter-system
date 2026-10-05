@@ -149,15 +149,22 @@ variant_agent_system/
 │   ├── ir_performance.png
 │   └── system_architecture.png
 ├── agents/                     # Production agents
+├── auth/                       # JWT account, session-cookie and CSRF layer
+├── db/                         # SQLAlchemy models and session handling
+├── services/                   # Entitlements, API keys, history, analytics, mail, upgrades
+├── retrieval/                  # BM25, rank fusion and the ranking metrics
+├── migrations/                 # Alembic migrations (nine tables)
+├── docs/                       # Architecture, sequence, data-model and retrieval documents
 ├── data/                       # Dataset
 ├── frontend/                   # Web UI
 ├── llm/                        # LLM client
 ├── protocol/                   # Communication protocol (see protocol/PROTOCOL.md)
+├── scripts/                    # Data enrichment, plan seeding, admin bootstrap
 ├── tests/                      # Unit tests
 ├── api.py                      # REST API
 ├── evaluation.py               # Evaluation script
 ├── main.py                     # CLI orchestrator
-└── requirements.txt            # Dependencies
+└── requirements.txt            # Dependencies (requirements-api.txt is the lean runtime set)
 ```
 
 ## Dependencies

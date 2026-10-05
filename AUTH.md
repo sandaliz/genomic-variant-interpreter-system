@@ -1,14 +1,14 @@
 # VariantLens Authentication, Plans & Quotas
 
 This document describes the account and entitlement layer that sits **in front of**
-the four-agent pipeline. The agents themselves are unchanged: they still receive a
-raw query and still run their own API-key check. Nothing in `agents/`, `protocol/`
-or the four-agent logic in `main.py` depends on accounts, plans or quotas.
+the agent pipeline. The agents themselves are unchanged: they still receive a raw
+query and still run their own API-key check. Nothing in `agents/`, `protocol/`
+or the agent logic in `main.py` depends on accounts, plans or quotas.
 
 ```
-Browser ──JWT──▶ FastAPI (auth + entitlements) ──API key──▶ main.py ──▶ 4 agents
-                        │                                     │
-                        └──▶ PostgreSQL (users, plans, usage) ┘
+Browser ──JWT────────▶ FastAPI (auth + entitlements) ──API key──▶ main.py ──▶ agents
+Program ──X-API-Key──▶        │                                      │
+                              └──▶ PostgreSQL (users, plans, usage) ──┘
 ```
 
 ---
@@ -27,19 +27,22 @@ without touching the agentic core.
 
 | Path | Responsibility |
 |---|---|
-| `db/models.py` | `Plan`, `User`, `UsageRecord` ORM models |
+| `db/models.py` | `Plan`, `User`, `UsageRecord`, `ApiKey` ORM models |
 | `db/database.py` | Engine, session factory, `get_db()` FastAPI dependency |
-| `migrations/` + `alembic.ini` | Alembic migration for the three tables |
+| `migrations/` + `alembic.ini` | Alembic migrations for the account, audit and key tables |
 | `auth/security.py` | Argon2id password hashing, JWT mint/decode |
 | `auth/schemas.py` | Pydantic request/response contracts |
-| `auth/dependencies.py` | `get_current_user()`, `require_admin()` |
+| `auth/dependencies.py` | `get_current_user()` (bearer **or** `X-API-Key`), `require_admin()` |
 | `auth/routes.py` | `/api/auth/register`, `/login`, `/me` |
 | `services/entitlement_service.py` | Quota windows, feature flags, usage recording |
+| `services/api_key_service.py` | Issue, resolve, list and revoke scoped API keys |
 | `scripts/seed_plans.py` | Inserts the Free / Professional / Enterprise plans |
 | `scripts/create_admin.py` | Creates the bootstrap admin account |
 | `tests/test_auth.py` | Registration, login, JWT handling |
 | `tests/test_entitlements.py` | Quota arithmetic, month windows, row locking |
 | `tests/test_classify_api.py` | HTTP auth, plan gate, 429 behaviour |
+| `tests/test_api_keys.py` | Key creation gating, resolution, downgrade, revocation |
+| `tests/test_audit_export.py` | Audit-export entitlement gate, scoping, CSV |
 | `tests/test_admin.py` | Role-based access, privilege guards, password reset |
 | `tests/test_review_signoffs.py` | Sign-off persistence, ownership, durability |
 | `tests/test_cache_isolation.py` | Cached results are scoped per account |
@@ -197,6 +200,10 @@ bearer token is only ever sent by a client that chose to send it — there is
 nothing ambient for a hostile page to ride. An explicit `Authorization` header
 takes precedence over any cookie present.
 
+**`X-API-Key` needs no CSRF header either**, for the same reason: a header is
+only sent by a client that chose to send it. CSRF is checked only on the
+cookie path, which is the one credential a browser attaches automatically.
+
 Local development runs on plain HTTP, where browsers silently drop a `Secure`
 cookie, so `COOKIE_SECURE=false` is needed for `http://localhost` only. It must
 never be set in production.
@@ -251,14 +258,20 @@ Login, registration, password change and every admin mutation write an
 | POST | `/api/auth/password-reset/request` | none | Issue a 6-digit reset code |
 | POST | `/api/auth/password-reset/confirm` | none | Redeem it, set a new password, sign in |
 | GET | `/api/auth/me` | Bearer | Current account, plan, usage, entitlements |
-| POST | `/api/classify` | Bearer | Run the pipeline (quota-metered) |
-| GET | `/api/trail/{variant_id}` | Bearer | Agent-to-agent audit trail |
-| GET | `/api/pipeline/{variant_id}` | Bearer | Full pipeline record |
+| POST | `/api/classify` | Bearer or `X-API-Key` | Run the pipeline (quota-metered) |
+| GET | `/api/trail/{variant_id}` | Bearer or `X-API-Key` | Agent-to-agent audit trail |
+| GET | `/api/pipeline/{variant_id}` | Bearer or `X-API-Key` | Full pipeline record |
+| POST | `/api/keys` | Bearer + `api_access` | Mint a scoped API key (raw value shown **once**) |
+| GET | `/api/keys` | Bearer | List own keys (metadata only, any plan) |
+| DELETE | `/api/keys/{key_id}` | Bearer | Revoke an own key |
+| GET | `/api/export/audit` | Bearer + `audit_export` | Export own usage/auth/sign-off rows (JSON or `?format=csv`) |
 | GET | `/api/admin/users` | Bearer + `admin` | Read-only account listing |
 
 Self-registration can never create an admin: the route hard-codes
 `role="clinician"`. Duplicate username or email returns `409`. Unknown address
-and wrong password return the same `401` body so accounts cannot be enumerated.
+and wrong password return the same `401` body **and burn the same Argon2id work**
+(`verify_password_or_dummy` verifies against a dummy hash when no account exists),
+so accounts cannot be enumerated by message or by response time.
 
 ### Email is the identity
 `username` is a **display handle**, not a credential. It stays unique and
@@ -323,10 +336,30 @@ plan change can never leak into a concurrent request. The Free plan still runs t
 **full four-agent pipeline** — it is rule-based reasoning and template reporting,
 not a reduced pipeline.
 
-`api_access` and `audit_export` are stored, returned by `/api/auth/me` and shown in
-the UI, but are **not yet enforced as gates** — `api_access` will gate the
-programmatic endpoint once one exists, and `audit_export` will gate audit-trail
-export. That work is deliberately out of this scope rather than silently implied.
+The other two entitlements are now enforced gates too:
+
+- **`api_access`** gates `POST /api/keys` — only a plan with this flag can mint a
+  scoped API key. `GET /api/keys` and `DELETE /api/keys/{id}` work for any plan,
+  so a downgraded account can still see and revoke its keys.
+- **`audit_export`** gates `GET /api/export/audit` (JSON or `?format=csv`) with a
+  `403` when the flag is absent.
+
+### Scoped API keys
+
+An API key authenticates a programme the same way a session does: `get_current_user()`
+checks for an `X-API-Key` header first and, if present, resolves it instead of the
+bearer token (CSRF does not apply — there is no cookie to forge).
+
+| Property | How |
+|---|---|
+| Storage | SHA-256 digest only (`key_hash`, unique + indexed). The raw `vl_…` value is returned **once**, at creation |
+| Display | A short `prefix` is stored so the UI can show which key is which without the secret |
+| Revocation | `revoked_at` — a revoked key fails resolution immediately |
+| Plan binding | `resolve_key()` checks the owner's plan still carries `api_access` **on every request**, so a downgrade disables existing keys at once |
+| Audit | `last_used_at` is stamped on each successful resolution |
+
+`tests/test_api_keys.py` covers creation gating, the downgrade-revokes behaviour,
+revocation, unknown keys, and that key material never appears in listings.
 
 ---
 
@@ -673,7 +706,7 @@ there is nowhere for a credential to be baked into by accident:
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 485 tests
+python3 -m pytest tests/ -v      # 522 tests
 ```
 
 | File | Tests | Covers |
@@ -688,8 +721,11 @@ python3 -m pytest tests/ -v      # 485 tests
 | `tests/test_profile.py` | 20 | profile editing, email-change guard, self-service password change |
 | `tests/test_analytics.py` | 19 | dashboard figures, gap-filled daily series, role checks |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
+| `tests/test_api_keys.py` | 10 | key creation gated on `plan.api_access`, digest-only storage, `X-API-Key` resolution, downgrade disables keys, revocation, ownership scoping |
+| `tests/test_audit_export.py` | 5 | `plan.audit_export` gate (403/401), caller-scoped JSON rows, CSV header + disposition, bad format rejected |
+| `tests/test_mcp_tools.py` | 6 | imports without the `mcp` package, clear error from `build_server()`, tool results, rejection, `top_k`, examples |
 | `tests/test_frontend.py` | 37 | view visibility, auth panes, JS↔DOM wiring, served assets |
-| existing agent tests | 75 | unchanged four-agent behaviour |
+| existing agent tests | 91 | four-agent behaviour plus the Supervisor/Verifier control plane (`tests/test_orchestrator.py`) |
 
 The account layer is tested against **in-memory SQLite** so the suite needs no
 database server; the models are deliberately portable (`native_enum=False`,

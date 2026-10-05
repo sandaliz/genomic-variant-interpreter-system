@@ -11,11 +11,23 @@ Provides a comprehensive evaluation with:
      - Precision, Recall, F1-score (macro and per-class)
      - Per-class breakdown
 
-  2. **Information Retrieval metrics**: (Precision@K, Recall@K)
-     - Retrieval precision at top-K
-     - Retrieval recall at top-K
+  2. **Information Retrieval metrics**:
+     - Retrieval precision/recall at top-K, exact-match@K, MRR@K
+     - nDCG@K and MAP@K
+     - A head-to-head comparison of the three lexical rankers (TF-IDF, BM25,
+       and their Reciprocal Rank Fusion), ranked over the whole corpus so the
+       difference is a difference between the models and nothing else
 
-  3. **Ablation comparison**:
+  3. **Calibration**:
+     - Expected Calibration Error and a reliability table for the confidence
+       scores, plus the accuracy per confidence band
+
+  4. **Fairness / subgroup performance**:
+     - Accuracy and F1 stratified by variant type, allele-frequency band (the
+       ACMG/AMP cut points, not sample deciles) and ClinVar review status, with
+       the worst-performing stratum called out
+
+  5. **Ablation comparison**:
      - Rules-only (deterministic)
      - Gemini-only (LLM)
      - Rules + Gemini (hybrid) vs ground truth
@@ -26,6 +38,7 @@ and may take a long time / incur API costs. Use --no-llm to skip it.
 Run:
     python evaluation.py
     python evaluation.py --sample-size 50 --no-llm --no-ir
+    python evaluation.py --rankers-only          # just the retrieval comparison
 """
 
 import os
@@ -42,10 +55,18 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from agents.classification_agent import ClassificationAgent
-from agents.evidence_agent import EvidenceRetrievalAgent
+from agents.evidence_agent import HAS_SKLEARN, RANKERS, EvidenceRetrievalAgent
 from agents.intake_agent import IntakeAgent
 from protocol.message import MessageLog
 from protocol.security import InvalidVariantQuery
+from retrieval.fusion import DEFAULT_RRF_K, rank_from_scores, reciprocal_rank_fusion
+from retrieval.metrics import (
+    average_precision_at_k,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    reciprocal_rank,
+)
 
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "data", "clinvar_variant_dataset.xlsx")
@@ -208,6 +229,22 @@ def directional_label(label):
     return _DIRECTIONAL.get(str(label).strip().lower())
 
 
+def _directional_outcome(truth, prediction):
+    """
+    Directional agreement as a tri-state: True, False, or None.
+
+    None means the pair is not answerable -- typically because the ClinVar truth
+    is "Conflicting classifications", which is a statement about submitters
+    rather than a class. None is not False: excluding the row and counting it
+    wrong would turn "nobody can predict this" into "the system failed".
+    """
+    truth_direction = directional_label(truth)
+    predicted_direction = directional_label(prediction)
+    if truth_direction is None or predicted_direction is None:
+        return None
+    return truth_direction == predicted_direction
+
+
 def compute_directional_metrics(results: list, key: str = "predicted") -> dict:
     """Directional agreement on rows whose ground truth is determinate."""
     outcomes = []
@@ -305,7 +342,8 @@ def compute_classification_metrics(results: list) -> dict:
 # ------------------------------------------------------------------
 # IR metrics (Precision@K, Recall@K, Exact-match@K, MRR@K)
 # ------------------------------------------------------------------
-def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> dict:
+def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5,
+                       ranker: str = None) -> dict:
     """
     Evaluate the Evidence Agent's retrieval quality.
 
@@ -318,10 +356,21 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
                  (= 1.0 if the exact variant appears in top-K, else 0.0)
     Exact@K:     Same as Recall@K (did the exact variant appear in top-K?)
     MRR@K:       Mean reciprocal rank of the exact variant within top-K.
+    nDCG@K:      Discounted gain of the exact variant's position.
+    MAP@K:       Mean average precision over the same single relevant row.
+
+    nDCG and MAP read the *rank* of the hit, which is what the returned
+    ``relevance_lists`` carry: one list per query, holding a single 1 at the
+    position the correct variant reached. With one relevant document per query
+    MAP@K is numerically MRR@K and nDCG@K is a monotone function of the rank --
+    the report says so rather than presenting three correlated numbers as three
+    independent findings. They are computed here anyway so the live pipeline's
+    ranking is scored with the standard metric definitions, and so the ranker
+    comparison below can reuse the same tested functions.
     """
     df = load_ground_truth(dataset_path, sample_size=sample_size)
 
-    agent = EvidenceRetrievalAgent(dataset_path)
+    agent = EvidenceRetrievalAgent(dataset_path, ranker=ranker)
     intake = IntakeAgent()
     log = MessageLog()
 
@@ -329,6 +378,11 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
     recall_at_k_list = []
     exact_at_k_list = []
     reciprocal_rank_list = []
+    # Ranked relevance lists, one per query, for the metrics that need the rank
+    # of the hit rather than just its presence. For an exact-variant query there
+    # is exactly one relevant row, so each list holds a single 1 at the position
+    # the correct variant reached (or no 1 at all, when it was missed).
+    relevance_lists = []
 
     for _, row in df.iterrows():
         gene = row["Gene"]
@@ -353,11 +407,13 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
                     recall_at_k_list.append(1.0)
                     exact_at_k_list.append(1.0)
                     reciprocal_rank_list.append(1.0)
+                    relevance_lists.append([1])
                 else:
                     precision_at_k_list.append(0.0)
                     recall_at_k_list.append(0.0)
                     exact_at_k_list.append(0.0)
                     reciprocal_rank_list.append(0.0)
+                    relevance_lists.append([0])
                 continue
 
             # Precision@K: how many of top-K are the exactly correct variant?
@@ -370,6 +426,7 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
             found_exact = 1.0 if exact_in_top_k > 0 else 0.0
             recall_at_k_list.append(found_exact)
             exact_at_k_list.append(found_exact)
+            relevance_lists.append([1 if r.get("exact_match") else 0 for r in top_k])
             rank = next((idx for idx, r in enumerate(top_k, start=1) if r.get("exact_match")), None)
             reciprocal_rank_list.append(1.0 / rank if rank else 0.0)
 
@@ -378,6 +435,7 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
 
     return {
         "sample_size": len(exact_at_k_list),
+        "ranker": agent.ranker,
         "precision_at_k": {
             "k": k,
             "mean": np.mean(precision_at_k_list) if precision_at_k_list else 0,
@@ -398,7 +456,476 @@ def compute_ir_metrics(dataset_path: str, sample_size: int = 20, k: int = 5) -> 
             "mean": np.mean(reciprocal_rank_list) if reciprocal_rank_list else 0,
             "values": reciprocal_rank_list,
         },
+        "ndcg_at_k": {
+            "k": k,
+            "mean": float(np.mean([ndcg_at_k(r, k) for r in relevance_lists]))
+            if relevance_lists else 0.0,
+            "values": [ndcg_at_k(r, k) for r in relevance_lists],
+        },
+        "map_at_k": {
+            "k": k,
+            "mean": float(np.mean([average_precision_at_k(r, k) for r in relevance_lists]))
+            if relevance_lists else 0.0,
+            "values": [average_precision_at_k(r, k) for r in relevance_lists],
+        },
     }
+
+
+# ------------------------------------------------------------------
+# Lexical ranker comparison (whole-corpus, one query at a time)
+# ------------------------------------------------------------------
+def _optimistic_rank(scores, position: int):
+    """
+    The rank the given document could claim under these scores.
+
+    1 + the number of documents scoring *strictly* higher, so a tie resolves in
+    the document's favour. That is the best rank the model could hand back, and
+    it is the right choice here: the live pipeline sorts with the same
+    descending order, and the question being asked is whether the model put the
+    right row near the top, not how it broke a tie with an unrelated row.
+
+    Returns None when the position is outside the corpus.
+    """
+    scores = np.asarray(scores, dtype=float)
+    if position < 0 or position >= scores.size:
+        return None
+    # np.sort(-scores) is the ascending array of negated scores, so the count of
+    # elements below -target is exactly the count of elements above target.
+    return int(np.searchsorted(np.sort(-scores), -float(scores[position]),
+                               side="left")) + 1
+
+
+def _corpus_scores(agent, query: str) -> dict:
+    """
+    Score every document in the corpus for one query, under each ranker.
+
+    The live pipeline retrieves candidates in steps (exact lookup, then position,
+    then gene, then text) and the exact-match path short-circuits before any
+    lexical ranking happens. Comparing the rankers through that path would
+    therefore return three identical numbers, because it never consults a text
+    model at all. This function asks the narrower, answerable question instead:
+    given only the query text, where does each model put the correct row?
+
+    TF-IDF and BM25 scores come from the agent's own vectorizer and index over
+    the same ``search_text`` field, so this is the live models over the live
+    corpus. The hybrid score is Reciprocal Rank Fusion of their two full
+    rankings, which is the same fusion the ``hybrid`` ranker applies to its
+    candidate union.
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    tfidf = cosine_similarity(
+        agent.vectorizer.transform([query]), agent.tfidf_matrix
+    ).flatten()
+    bm25 = np.asarray(agent.bm25_index.score(query), dtype=float)
+
+    positional = {
+        index: float(score) for index, score in enumerate(tfidf)
+    }
+    bm25_positional = {
+        index: float(score) for index, score in enumerate(bm25)
+    }
+    fused = reciprocal_rank_fusion([
+        rank_from_scores(positional),
+        rank_from_scores(bm25_positional),
+    ], k=DEFAULT_RRF_K)
+    hybrid = np.array([fused.get(index, 0.0) for index in range(len(tfidf))],
+                      dtype=float)
+
+    return {"tfidf": tfidf, "bm25": bm25, "hybrid": hybrid}
+
+
+def _ranker_metrics(ranks, k: int) -> dict:
+    """Metric block for one ranker, from the list of per-query ranks."""
+    known = [rank for rank in ranks if rank is not None]
+    relevance_lists = []
+    for rank in known:
+        # One relevant document: a 1 at the rank it reached, zeros above it and
+        # nothing at all once it fell past k.
+        relevance_lists.append(([0] * (rank - 1) + [1]) if rank <= k else ([0] * k))
+    if not known:
+        return {"queries": 0, "mrr": 0.0, "ndcg": 0.0, "map": 0.0,
+                "exact_at_k": 0.0, "hit_at_1": 0.0, "mean_rank": None}
+    return {
+        "queries": len(known),
+        "mrr": float(np.mean([reciprocal_rank(r) for r in relevance_lists])),
+        "ndcg": float(np.mean([ndcg_at_k(r, k) for r in relevance_lists])),
+        "map": float(np.mean([average_precision_at_k(r, k) for r in relevance_lists])),
+        "exact_at_k": float(np.mean([1.0 if rank <= k else 0.0 for rank in known])),
+        "hit_at_1": float(np.mean([1.0 if rank == 1 else 0.0 for rank in known])),
+        "mean_rank": float(np.mean(known)),
+    }
+
+
+def compare_lexical_rankers(dataset_path: str, sample_size: int = 30,
+                            k: int = 5) -> dict:
+    """
+    Rank the whole corpus with TF-IDF, BM25 and their RRF fusion, and compare.
+
+    Every query is scored by all three models over every one of the corpus rows,
+    so the only thing that differs between the three columns is the model. The
+    query text is the same natural-language question the pipeline builds for a
+    variant, which is what the lexical models see in production.
+    """
+    if not HAS_SKLEARN:
+        return {"available": False,
+                "reason": "scikit-learn is not installed, so TF-IDF cannot run"}
+
+    df = load_ground_truth(dataset_path, sample_size=sample_size)
+    agent = EvidenceRetrievalAgent(dataset_path)
+
+    keys = agent.df["lookup_key"].to_numpy()
+    ranks = {name: [] for name in RANKERS}
+    # Which model put the target highest, per query. This is not derived from
+    # any aggregate and does not collapse to the same number as MRR, so it is
+    # the one column here that is genuinely independent of the others.
+    wins = {name: 0 for name in RANKERS}
+    queries = 0
+
+    for _, row in df.iterrows():
+        gene, hgvs = row["Gene"], row["HGVS_notation"]
+        key = f"{gene}:{hgvs}"
+        positions = np.flatnonzero(keys == key)
+        if positions.size == 0:
+            continue
+        position = int(positions[0])
+
+        query = f"Is {gene} {hgvs} pathogenic?"
+        scores = _corpus_scores(agent, query)
+
+        query_ranks = {}
+        for name, vector in scores.items():
+            query_ranks[name] = _optimistic_rank(vector, position)
+            ranks[name].append(query_ranks[name])
+
+        best = min(value for value in query_ranks.values() if value is not None)
+        for name, value in query_ranks.items():
+            if value == best:
+                wins[name] += 1
+        queries += 1
+
+    summary = {name: _ranker_metrics(ranks[name], k) for name in RANKERS}
+    corpus_size = len(agent.df)
+    return {
+        "available": True,
+        "k": k,
+        "corpus_size": corpus_size,
+        "queries": queries,
+        "summary": summary,
+        "wins": wins,
+        "per_query": {name: ranks[name] for name in RANKERS},
+        # Stated rather than left for a reader to derive: with a single relevant
+        # document per query, MAP@k and MRR@k are the same statistic. The
+        # comparison is a comparison of ranks.
+        "note": ("One relevant document per query, so MAP@k equals MRR@k and "
+                 "nDCG@k is a monotone function of the rank. Read the columns "
+                 "as three measurements of the same quantity, not as three "
+                 "independent findings."),
+    }
+
+
+def print_ranker_comparison(comparison: dict):
+    """Pretty-print the TF-IDF / BM25 / hybrid comparison table."""
+    if not comparison:
+        return
+    if not comparison.get("available"):
+        print()
+        print("LEXICAL RANKER COMPARISON")
+        print(f"  Not run: {comparison.get('reason')}")
+        return
+
+    k = comparison["k"]
+    print()
+    print("LEXICAL RANKER COMPARISON")
+    print(f"  Corpus: {comparison['corpus_size']} variants | "
+          f"queries: {comparison['queries']} | k={k}")
+    print("  Every query scored against every row, so only the model differs.")
+    print()
+    header = f"  {'ranker':<10}{'MRR@k':>9}{'nDCG@k':>9}{'MAP@k':>9}"
+    header += f"{'Exact@k':>10}{'Hit@1':>8}{'mean rank':>11}"
+    print(header)
+    for name, metrics in comparison["summary"].items():
+        mean_rank = metrics["mean_rank"]
+        mean_rank_text = "n/a" if mean_rank is None else f"{mean_rank:.1f}"
+        print(f"  {name:<10}{metrics['mrr']:>9.3f}{metrics['ndcg']:>9.3f}"
+              f"{metrics['map']:>9.3f}{metrics['exact_at_k']:>10.3f}"
+              f"{metrics['hit_at_1']:>8.3f}{mean_rank_text:>11}")
+    print()
+    print("  Queries where each ranker put the correct row highest:")
+    for name, count in comparison["wins"].items():
+        print(f"    {name:<10} {count}/{comparison['queries']}")
+    print()
+    print(f"  Note: {comparison['note']}")
+
+
+# ------------------------------------------------------------------
+# Calibration
+# ------------------------------------------------------------------
+def compute_calibration(results: list, key: str = "match",
+                        confidence_key: str = "confidence_numeric",
+                        n_bins: int = 10) -> dict:
+    """
+    Reliability table, Expected Calibration Error and Brier score.
+
+    A confidence score is *calibrated* when the rows it marks 80 are right
+    about 80% of the time. ECE is the sample-weighted average distance between
+    what the system claimed and what happened, bucketed so a handful of
+    overconfident rows cannot be hidden inside a good average.
+
+    Two things this deliberately does not do:
+
+    * It does not treat the score as a probability that was fitted to data. It
+      is derived from evidence components (see ``_compute_confidence_score``),
+      so a miscalibration here is a statement about those weights, not about a
+      softmax. The report says which.
+    * It does not report a number without a sample size. Every bin carries its
+      count, and bins below ``MIN_BIN`` are printed but marked, because an
+      accuracy of 1.000 over two rows is not evidence of calibration.
+
+    ``key`` selects the outcome being predicted: "match" (exact class agreement
+    with ClinVar) or "directional_match" (agreement on pathogenic / benign /
+    uncertain, which is what a clinician actually consumes). Rows whose outcome
+    is indeterminate (None) are excluded -- "Conflicting classifications" is
+    not a class the system can be right or wrong about.
+    """
+    n_bins = max(1, int(n_bins))
+    MIN_BIN = 10
+
+    probabilities = []
+    outcomes = []
+    for result in results:
+        outcome = result.get(key)
+        if not isinstance(outcome, (bool, np.bool_)):
+            continue
+        raw = result.get(confidence_key)
+        if raw is None or (isinstance(raw, float) and not np.isfinite(raw)):
+            continue
+        # Confidence travels as 0-100; the metric wants 0-1.
+        probability = float(raw) / 100.0
+        probability = min(max(probability, 0.0), 1.0)
+        probabilities.append(probability)
+        outcomes.append(bool(outcome))
+
+    total = len(probabilities)
+    if total == 0:
+        return {"total": 0, "n_bins": n_bins, "bins": [], "ece": 0.0,
+                "mce": 0.0, "brier": 0.0, "brier_skill": 0.0,
+                "base_rate": 0.0, "accuracy": 0.0, "outcome": key,
+                "min_bin": MIN_BIN}
+
+    base_rate = sum(outcomes) / total
+
+    buckets = []
+    for index in range(n_bins):
+        lower = index / n_bins
+        upper = (index + 1) / n_bins
+        in_bin = [
+            (probability, outcome)
+            for probability, outcome in zip(probabilities, outcomes)
+            if min(int(probability * n_bins), n_bins - 1) == index
+        ]
+        if not in_bin:
+            continue
+        count = len(in_bin)
+        mean_confidence = sum(p for p, _ in in_bin) / count
+        accuracy = sum(1 for _, outcome in in_bin if outcome) / count
+        buckets.append({
+            "lower": lower,
+            "upper": upper,
+            "count": count,
+            "mean_confidence": mean_confidence,
+            "accuracy": accuracy,
+            "gap": accuracy - mean_confidence,
+            "small": count < MIN_BIN,
+        })
+
+    ece = sum(bucket["count"] / total * abs(bucket["gap"]) for bucket in buckets)
+    mce = max((abs(bucket["gap"]) for bucket in buckets), default=0.0)
+    brier = sum((probability - (1.0 if outcome else 0.0)) ** 2
+                for probability, outcome in zip(probabilities, outcomes)) / total
+    # The reference forecast is the base rate: always saying "79% correct" and
+    # being right about that often. A positive skill score means the confidence
+    # number carries information beyond the dataset's overall hit rate.
+    reference = base_rate * (1.0 - base_rate)
+    brier_skill = (1.0 - brier / reference) if reference > 0 else 0.0
+
+    return {
+        "total": total,
+        "n_bins": n_bins,
+        "bins": buckets,
+        "ece": ece,
+        "mce": mce,
+        "brier": brier,
+        "brier_skill": brier_skill,
+        "base_rate": base_rate,
+        "accuracy": base_rate,
+        "outcome": key,
+        "min_bin": MIN_BIN,
+    }
+
+
+# ------------------------------------------------------------------
+# Fairness / subgroup performance
+# ------------------------------------------------------------------
+# Allele-frequency strata use the ACMG/AMP standing thresholds rather than
+# deciles of this sample. A decile of a 100-row sample is ten rows per bin,
+# which is too few to read, and the thresholds below are the cut points the
+# classification guidelines themselves use -- so a gap between "rare" and
+# "common" is a gap that matters clinically, not an artefact of binning.
+_AF_BANDS = [
+    ("absent_or_very_rare (<=0.01%)", 0.0, 0.0001),
+    ("rare (0.01-0.1%)", 0.0001, 0.001),
+    ("low_frequency (0.1-1%)", 0.001, 0.01),
+    ("common (1-5%)", 0.01, 0.05),
+    ("too_common (>=5%)", 0.05, float("inf")),
+]
+
+
+def _max_allele_frequency(row):
+    """Highest of the three population allele frequencies, or None."""
+    values = []
+    for column in ("AF_ESP", "AF_EXAC", "AF_TGP"):
+        value = row.get(column)
+        if value is None or pd.isna(value):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            values.append(number)
+    return max(values) if values else None
+
+
+def _allele_frequency_band(row) -> str:
+    frequency = _max_allele_frequency(row)
+    if frequency is None:
+        return "unknown"
+    for label, lower, upper in _AF_BANDS:
+        if lower <= frequency < upper:
+            return label
+    return "too_common (>=5%)"
+
+
+def _review_status_band(row) -> str:
+    """ClinVar review level, as stars. Only populated on the enriched workbook."""
+    raw = row.get("ClinVarReviewStars")
+    if raw is None or (not isinstance(raw, str) and pd.isna(raw)):
+        return "unknown"
+    try:
+        stars = int(float(raw))
+    except (TypeError, ValueError):
+        return "unknown"
+    if stars >= 3:
+        # 3 and 4 stars both mean "reviewed by an expert panel" / "practice
+        # guideline" -- the distinction is not large enough at this sample size
+        # to justify separate columns.
+        return "3+ stars (expert reviewed)"
+    return f"{stars} star" + ("" if stars == 1 else "s")
+
+
+def stratum_fields(row) -> dict:
+    """
+    The three subgroup labels a result is measured under.
+
+    Named and computed in one place so the table can be read as one experiment
+    rather than three unreconciled ones.
+    """
+    variant_type = row.get("Variant_type")
+    if variant_type is None or (not isinstance(variant_type, str) and pd.isna(variant_type)):
+        variant_type = "unknown"
+    return {
+        "variant_type": str(variant_type).strip() or "unknown",
+        "allele_frequency_band": _allele_frequency_band(row),
+        "review_stars": _review_status_band(row),
+    }
+
+
+def _stratum_block(group: list, min_group_size: int) -> dict:
+    """Accuracy and macro F1 for one subgroup, plus a small-sample flag."""
+    total = len(group)
+    correct = sum(1 for result in group if result.get("match"))
+    reconciled_correct = sum(1 for result in group if result.get("match_reconciled"))
+    directional = [result for result in group
+                   if isinstance(result.get("directional_match"), (bool, np.bool_))]
+    directional_correct = sum(1 for result in directional
+                              if result["directional_match"])
+
+    def _macro_f1(rows, match_key, prediction_key):
+        return compute_classification_metrics([
+            {**row, "predicted": row[prediction_key], "match": row[match_key]}
+            for row in rows
+        ])["macro"]["f1"]
+
+    return {
+        "total": total,
+        "correct": correct,
+        "accuracy": correct / total if total else 0.0,
+        "reconciled_accuracy": reconciled_correct / total if total else 0.0,
+        "directional_total": len(directional),
+        "directional_accuracy": (directional_correct / len(directional)
+                                 if directional else 0.0),
+        "macro_f1": _macro_f1(group, "match", "predicted") if total else 0.0,
+        "reconciled_macro_f1": _macro_f1(group, "match_reconciled", "predicted_reconciled")
+        if total else 0.0,
+        "small": total < min_group_size,
+    }
+
+
+def compute_fairness(results: list, min_group_size: int = 20) -> dict:
+    """
+    Accuracy and F1 stratified by variant type, allele frequency and review level.
+
+    The question is not "is this system fair" in the abstract -- it is whether
+    the same evidence produces the same quality of answer for a frameshift and
+    for a missense, for a variant seen in population data and one never seen
+    before, and for a variant a ClinVar panel has reviewed and one nobody has.
+    A subgroup the model does much worse on is where a real limitation lives.
+
+    Two guards against reading noise as a finding:
+
+    * Every stratum reports its own size, and a stratum smaller than
+      ``min_group_size`` is flagged ``small``. The worst-stratum callout below
+      only considers strata large enough to say anything about.
+    * The stratification keys are properties of the *input* (variant type,
+      population frequency, review level), never of the prediction, so the
+      groups cannot be shaped by the thing being measured.
+    """
+    dimensions = {
+        "variant_type": {},
+        "allele_frequency_band": {},
+        "review_stars": {},
+    }
+
+    for result in results:
+        for dimension in dimensions:
+            group = result.get(dimension) or "unknown"
+            dimensions[dimension].setdefault(group, []).append(result)
+
+    report = {}
+    for dimension, groups in dimensions.items():
+        strata = {
+            name: _stratum_block(group, min_group_size)
+            for name, group in sorted(groups.items())
+        }
+        eligible = {
+            name: block for name, block in strata.items()
+            if not block["small"] and block["total"] > 0
+        }
+        worst = None
+        if eligible:
+            name = min(eligible, key=lambda key: eligible[key]["accuracy"])
+            worst = {"stratum": name, **eligible[name]}
+        report[dimension] = {
+            "strata": strata,
+            "min_group_size": min_group_size,
+            "worst": worst,
+            "eligible_strata": len(eligible),
+            "small_strata": sorted(name for name, block in strata.items()
+                                   if block["small"]),
+        }
+
+    return report
 
 
 # ------------------------------------------------------------------
@@ -476,7 +1003,8 @@ def run_ablation(dataset_path: str, sample_size: int = 20, use_llm: bool = False
 def evaluate(sample_size: int = 100, include_ir: bool = True,
              include_ablation: bool = True, abort_llm: bool = False,
              ground_truth_mode: str = "auto",
-             dataset_path: str = None) -> dict:
+             dataset_path: str = None,
+             include_rankers: bool = True) -> dict:
     """
     Run the full evaluation suite.
 
@@ -517,7 +1045,16 @@ def evaluate(sample_size: int = 100, include_ir: bool = True,
             "match": predicted == ground_truth,
             "match_reconciled": reconciled == ground_truth,
             "confidence": prediction["confidence"],
+            "confidence_numeric": prediction.get("confidence_numeric"),
+            # Reconciliation re-states confidence around the final label (it
+            # raises the floor when a reviewed ClinVar consensus backs it), so
+            # the two numbers are calibrated separately -- a single column would
+            # score the wrong probability against the wrong outcome.
+            "confidence_numeric_reconciled": reconciled_prediction.get(
+                "confidence_numeric"),
+            "directional_match": _directional_outcome(ground_truth, predicted),
             "completeness": "complete" if evidence["predictor_available"]["complete"] else "incomplete",
+            **stratum_fields(row),
         })
 
     # Classification metrics -- two numbers, deliberately kept separate:
@@ -543,10 +1080,35 @@ def evaluate(sample_size: int = 100, include_ir: bool = True,
     }
     confusion = compute_confusion_matrix(results)
 
+    # Calibration -- three separate questions, not one:
+    #   * is the evidence-based confidence honest about the evidence-based call?
+    #   * is it honest about the call the user is shown (after reconciliation,
+    #     which raises the floor on consensus-backed labels)?
+    #   * is it honest about the clinically meaningful direction, on the rows
+    #     where a direction exists at all?
+    calibration = compute_calibration(results, key="match",
+                                      confidence_key="confidence_numeric")
+    calibration_reconciled = compute_calibration(
+        reconciled_results, key="match",
+        confidence_key="confidence_numeric_reconciled")
+    calibration_directional = compute_calibration(
+        results, key="directional_match", confidence_key="confidence_numeric")
+
+    # Fairness -- subgroup accuracy, so a real limitation cannot hide inside a
+    # single pooled average.
+    fairness = compute_fairness(results)
+
     # IR metrics
     ir_metrics = None
     if include_ir:
         ir_metrics = compute_ir_metrics(dataset_path, sample_size=min(sample_size, 30), k=5)
+
+    # TF-IDF vs BM25 vs hybrid, ranked corpus-wide (see compare_lexical_rankers
+    # for why the pipeline-level numbers above cannot separate the three)
+    ranker_comparison = None
+    if include_ir and include_rankers:
+        ranker_comparison = compare_lexical_rankers(
+            dataset_path, sample_size=min(sample_size, 30), k=5)
 
     # Ablation
     ablation = None
@@ -563,7 +1125,12 @@ def evaluate(sample_size: int = 100, include_ir: bool = True,
         "classification_by_completeness": completeness_metrics,
         "confusion_matrix": confusion,
         "confusion_matrix_reconciled": reconciled_confusion,
+        "calibration": calibration,
+        "calibration_reconciled": calibration_reconciled,
+        "calibration_directional": calibration_directional,
+        "fairness": fairness,
         "ir_metrics": ir_metrics,
+        "lexical_ranker_comparison": ranker_comparison,
         "ablation": ablation,
         "results": results,
     }
@@ -638,11 +1205,18 @@ def print_ir_metrics(ir_metrics: dict):
         return
     print()
     print("INFORMATION RETRIEVAL METRICS")
-    print(f"  Sample size: {ir_metrics['sample_size']}")
+    print(f"  Sample size: {ir_metrics['sample_size']}"
+          f"  (ranker: {ir_metrics.get('ranker', 'tfidf')})")
     print(f"  Precision@{ir_metrics['precision_at_k']['k']}:  {ir_metrics['precision_at_k']['mean']:.3f}")
     print(f"  Recall@{ir_metrics['recall_at_k']['k']}:     {ir_metrics['recall_at_k']['mean']:.3f}")
     print(f"  Exact-match@{ir_metrics['exact_at_k']['k']}: {ir_metrics['exact_at_k']['mean']:.3f}")
     print(f"  MRR@{ir_metrics['mrr_at_k']['k']}:          {ir_metrics['mrr_at_k']['mean']:.3f}")
+    if "ndcg_at_k" in ir_metrics:
+        print(f"  nDCG@{ir_metrics['ndcg_at_k']['k']}:         {ir_metrics['ndcg_at_k']['mean']:.3f}")
+    if "map_at_k" in ir_metrics:
+        print(f"  MAP@{ir_metrics['map_at_k']['k']}:          {ir_metrics['map_at_k']['mean']:.3f}")
+        print("  (with one relevant variant per query, MAP@k and MRR@k are the")
+        print("   same statistic -- see the ranker comparison below)")
 
 
 def print_ablation(ablation: dict):
@@ -658,12 +1232,106 @@ def print_ablation(ablation: dict):
     print(f"  Rules + Gemini:    {ablation['combined']:.1%}" if ablation['combined'] is not None else "  Rules + Gemini:    N/A")
 
 
+def _reliability_strip(accuracy: float, mean_confidence: float, width: int = 20) -> str:
+    """
+    One reliability row as text: '=' is what actually happened, '^' is what the
+    system claimed. A caret to the right of the bar means overconfidence.
+    """
+    marks = [" "] * width
+    for index in range(min(int(round(accuracy * width)), width)):
+        marks[index] = "="
+    caret = min(max(int(round(mean_confidence * width)) - 1, 0), width - 1)
+    marks[caret] = "^"
+    return "|" + "".join(marks) + "|"
+
+
+def print_calibration(calibration: dict, title: str = "CALIBRATION"):
+    """Pretty-print a reliability table and its summary numbers."""
+    print()
+    print(title)
+    if not calibration or not calibration.get("total"):
+        print("  No rows with a confidence score and a determinate outcome.")
+        return
+
+    print(f"  Outcome being predicted: {calibration['outcome']}"
+          f"   rows: {calibration['total']}"
+          f"   base rate: {calibration['base_rate']:.3f}")
+    print("  '=' is observed accuracy, '^' is the confidence that was claimed;")
+    print("  a caret right of the bar is overconfidence, left is underconfidence.")
+    print()
+    print(f"  {'bin':<12}{'n':>5}{'claimed':>10}{'actual':>9}{'gap':>9}   ")
+    for bucket in calibration["bins"]:
+        flag = " *small" if bucket["small"] else ""
+        strip = _reliability_strip(bucket["accuracy"], bucket["mean_confidence"])
+        print(f"  {bucket['lower']:.1f}-{bucket['upper']:.1f}"
+              f"{bucket['count']:>6}{bucket['mean_confidence']:>10.3f}"
+              f"{bucket['accuracy']:>9.3f}{bucket['gap']:>+9.3f}  {strip}{flag}")
+    print()
+    print(f"  ECE (sample-weighted mean |gap|): {calibration['ece']:.4f}")
+    print(f"  MCE (worst single bin):           {calibration['mce']:.4f}")
+    print(f"  Brier score:                      {calibration['brier']:.4f}")
+    print(f"  Brier skill vs base rate:         {calibration['brier_skill']:+.4f}")
+    if calibration["brier_skill"] <= 0:
+        print("  (a non-positive skill score means the confidence number is no")
+        print("   better than always predicting the base rate)")
+    if calibration["bins"] and any(bucket["small"] for bucket in calibration["bins"]):
+        print(f"  * bins with fewer than {calibration['min_bin']} rows: shown, but")
+        print("    an accuracy over a handful of rows is not evidence")
+
+
+def print_fairness(fairness: dict):
+    """Pretty-print subgroup accuracy, worst stratum first."""
+    if not fairness:
+        return
+    print()
+    print("SUBGROUP PERFORMANCE (fairness)")
+    print("  Accuracy by input stratum. Strata are properties of the variant, not")
+    print("  of the prediction, so the groups cannot be shaped by what is measured.")
+    for dimension, report in fairness.items():
+        strata = report["strata"]
+        if not strata:
+            continue
+        print()
+        print(f"  by {dimension}:")
+        print(f"    {'stratum':<36}{'n':>5}{'call':>8}{'shown':>8}{'dir':>8}{'F1':>8}")
+        ordered = sorted(strata.items(),
+                         key=lambda pair: (pair[1]["small"], pair[1]["accuracy"]))
+        for name, block in ordered:
+            directional = (f"{block['directional_accuracy']:.3f}"
+                           if block["directional_total"] else "n/a")
+            marker = "*" if block["small"] else " "
+            print(f"   {marker}{name[:34]:<36}{block['total']:>5}"
+                  f"{block['accuracy']:>8.3f}{block['reconciled_accuracy']:>8.3f}"
+                  f"{directional:>8}{block['macro_f1']:>8.3f}")
+        small = report["small_strata"]
+        if small:
+            print(f"    * fewer than {report['min_group_size']} rows: "
+                  f"{', '.join(small)}")
+        worst = report["worst"]
+        if worst:
+            print(f"    worst eligible stratum: {worst['stratum']} "
+                  f"({worst['accuracy']:.3f} over {worst['total']} rows)")
+        else:
+            print("    no stratum large enough to compare "
+                  f"({len(small)} flagged small)")
+    print()
+    print("  'call' = the agent's own evidence-based call, 'shown' = after ClinVar")
+    print("  consensus reconciliation, 'dir' = directional agreement on the rows")
+    print("  where the ClinVar truth is a single determinate class.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate the Genomic Variant Interpretation system")
     parser.add_argument("--sample-size", type=int, default=100,
                         help="Number of variants to evaluate (default: 100)")
     parser.add_argument("--no-ir", action="store_true",
                         help="Skip IR metrics (faster)")
+    parser.add_argument("--rankers-only", action="store_true",
+                        help="Run only the TF-IDF vs BM25 vs hybrid comparison "
+                             "and exit. Retrieval-only, so no LLM calls and no "
+                             "dataset labels are needed.")
+    parser.add_argument("--no-rankers", action="store_true",
+                        help="Skip the lexical ranker comparison (faster)")
     parser.add_argument("--no-ablation", action="store_true",
                         help="Skip ablation comparison (faster)")
     parser.add_argument("--no-llm", action="store_true",
@@ -678,6 +1346,21 @@ if __name__ == "__main__":
                              "use data/clinvar_variant_dataset_enriched.xlsx for real labels)")
     args = parser.parse_args()
 
+    dataset_path = args.dataset or DATASET_PATH
+
+    # Retrieval-only fast path. Nothing here touches a label or the network, so
+    # it is safe to run repeatedly while writing the report.
+    if args.rankers_only:
+        print("=" * 70)
+        print("LEXICAL RANKER COMPARISON")
+        print("=" * 70)
+        print_ranker_comparison(compare_lexical_rankers(
+            dataset_path, sample_size=args.sample_size, k=5))
+        print()
+        # This block is at module scope, so it cannot `return` -- exit cleanly
+        # instead of falling through into the full evaluation.
+        sys.exit(0)
+
     print("=" * 70)
     print("EVALUATION: Genomic Variant Interpretation System")
     print("=" * 70)
@@ -688,7 +1371,8 @@ if __name__ == "__main__":
         include_ablation=not args.no_ablation,
         abort_llm=args.no_llm,
         ground_truth_mode=args.ground_truth,
-        dataset_path=args.dataset,
+        dataset_path=dataset_path,
+        include_rankers=not args.no_rankers,
     )
 
     # Classification
@@ -713,8 +1397,24 @@ if __name__ == "__main__":
         print("CONFUSION MATRIX -- after ClinVar consensus reconciliation")
         print_confusion_matrix(result["confusion_matrix_reconciled"])
 
+    # Calibration
+    print_calibration(result["calibration"],
+                      "CALIBRATION -- evidence-based confidence vs evidence-based call")
+    print_calibration(
+        result["calibration_reconciled"],
+        "CALIBRATION -- confidence vs the call the user is shown (reconciled)")
+    print_calibration(
+        result["calibration_directional"],
+        "CALIBRATION -- evidence-based confidence vs clinical direction")
+
+    # Fairness
+    print_fairness(result["fairness"])
+
     # IR metrics
     print_ir_metrics(result["ir_metrics"])
+
+    # TF-IDF vs BM25 vs hybrid
+    print_ranker_comparison(result.get("lexical_ranker_comparison"))
 
     # Ablation
     print_ablation(result["ablation"])

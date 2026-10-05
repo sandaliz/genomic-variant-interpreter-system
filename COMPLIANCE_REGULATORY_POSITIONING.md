@@ -14,10 +14,10 @@ It is **not represented as a clinically validated, regulated medical device or p
 | Data | Public ClinVar-derived variant records | Validated data governance, provenance and update controls |
 | Clinical validity | Simplified ACMG-style project rules | Expert-reviewed ACMG/AMP/ClinGen methodology and validation |
 | AI/LLM | Optional Gemini-assisted reasoning and report generation | Model validation, version control, monitoring, change control and safety testing |
-| Security | Account authentication (Argon2id + JWT) with an agent-layer API key, role-based access control, plan feature gating, monthly quota enforcement, input validation, encrypted agent messages, audit trail | Managed identity, secrets management, TLS, least privilege, threat modelling and penetration testing |
+| Security | Account authentication (Argon2id + JWT) with an agent-layer API key, role-based access control, plan feature gating, scoped revocable API keys, monthly quota enforcement, input validation, encrypted agent messages, audit trail and a governed audit export | Managed identity, secrets management, TLS, least privilege, threat modelling and penetration testing |
 | Privacy | No real patient data required for the demo | Privacy impact assessment, access controls, retention policy and applicable health-data safeguards |
 | Human oversight | Reports explicitly require professional review | Defined review workflow, escalation criteria and documented accountability |
-| Software quality | Automated unit tests and evaluation notebook | Verification/validation plan, traceability, release controls and post-market monitoring where applicable |
+| Software quality | Automated unit tests (Python and Node), CI on every push, a container image and an evaluation notebook | Verification/validation plan, traceability, release controls and post-market monitoring where applicable |
 
 ## Relevant regulatory / governance areas
 
@@ -42,10 +42,25 @@ These frameworks should be assessed by qualified regulatory, legal and clinical 
 5. **Human review:** reports contain a clinical disclaimer and reviewer/sign-off fields.
 6. **Security audit:** the project includes an independent security assessment documenting prototype limitations.
 7. **Reproducibility:** evaluation scripts, analysis figures, tests and a pinned dependency set are included.
+8. **Self-verification:** a Verifier Agent audits the classification against the evidence it
+   rests on and re-states an over-confident call conservatively before it is reported. The
+   correction is conservative by construction — it can only lower confidence, never raise it —
+   and bounded to one round. Both the original and the corrected call remain in the audit trail.
+9. **Credential scoping and export control:** programme access uses revocable, plan-bound API
+   keys stored only as digests, and audit export is an entitlement-limited, caller-scoped
+   endpoint — so access to activity records is itself governed.
 
 ## Known prototype limitations
 
-The security audit intentionally records limitations that should **not** be hidden for the sake of commercialization. These include the classroom demo authentication model (a single shared demo key with no per-user quota or rate limiting), permissive CORS configuration, process-local Fernet key generation, and approximate retrieval flowing through the pipeline.
+The security audit intentionally records limitations that should **not** be hidden for the sake of commercialization. The account layer has since moved well past the original classroom demo: PostgreSQL accounts with Argon2id hashing, signed-then-encrypted (JWE) tokens, HttpOnly session cookies with CSRF double-submit protection, per-IP and per-account login throttling, role-based access control, per-plan feature gating with monthly quota enforcement and row-locked commit-time re-checks, hashed-identifier auth-event auditing, plan-bound scoped API keys, an entitlement-gated audit export, and CORS restricted to explicit origins.
+
+What remains a genuine prototype limitation is the operational and integration surface, not the authentication model:
+
+- **Process-local encryption keys** — the Fernet key protecting agent-to-agent payloads is generated per process; a multi-process deployment would need a managed key.
+- **In-process rate-limit counters** — login throttling and the result cache live in the process, so a multi-worker deployment needs a shared store (e.g. Redis).
+- **Approximate retrieval and simplified reasoning** — ranking is TF-IDF-based and the ACMG-style rules are simplified project rules, not expert-reviewed ACMG/AMP/ClinGen.
+- **No payment integration and no organisation tenancy** — plan changes are an administrator-reviewed hand-off and every account is a single user, by design.
+- **No production observability** — no managed secrets, centralised structured logging, metrics or error tracking.
 
 The appropriate commercialization path is therefore **validation and controlled hardening first**, rather than presenting the current prototype as clinically deployable.
 

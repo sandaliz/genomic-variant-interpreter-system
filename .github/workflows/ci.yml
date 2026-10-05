@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-tests:
+    name: Python test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        # requirements-api.txt is the runtime set; the suite needs no notebook
+        # stack. pytest and the coverage plugin are added explicitly because
+        # neither is a runtime dependency.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-api.txt pytest pytest-cov
+      - name: Run tests
+        # The suite is hermetic: conftest.py sets a placeholder DATABASE_URL and
+        # redirects the DB dependency to in-memory SQLite, so no PostgreSQL is
+        # needed here.
+        #
+        # Coverage is reported, not enforced. A coverage floor would have to be
+        # maintained as the suite grows, and the number this project needs to
+        # defend in its report is which paths are exercised, not a percentage.
+        run: |
+          python -m pytest tests/ -q \
+            --cov --cov-report=term-missing --cov-report=xml:coverage.xml
+      - name: Coverage in the job summary
+        if: always()
+        run: |
+          {
+            echo "### Python test coverage"
+            echo '```'
+            # The TOTAL row of the report, which is the last line of output.
+            python -m coverage report | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  frontend-js:
+    name: Frontend JS tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run Node test runner
+        run: node --test tests/js/
+
+  static-analysis:
+    name: Lint, types, dependency audit (advisory)
+    runs-on: ubuntu-latest
+    # None of these steps can fail the build, and that is a deliberate choice
+    # rather than an oversight. The codebase predates a linter: ruff and mypy
+    # both have real findings to report against it today, and a job that goes
+    # red on the first commit teaches people to ignore it. They run here so the
+    # findings are visible on every change; they become blocking once the
+    # backlog is cleared. config lives in pyproject.toml.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install the analysis tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy pip-audit
+          pip install -r requirements-api.txt
+      - name: ruff (style and likely bugs)
+        continue-on-error: true
+        run: ruff check . --output-format=github
+      - name: mypy (types in retrieval/)
+        continue-on-error: true
+        run: mypy
+      - name: pip-audit (known vulnerabilities)
+        continue-on-error: true
+        run: pip-audit -r requirements-api.txt

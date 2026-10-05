@@ -23,6 +23,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum as SAEnum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -134,6 +135,16 @@ class User(Base):
     upgrade_requests: Mapped[list["UpgradeRequest"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    # API keys are the account's own credentials, so they are removed with it
+    # rather than left orphaned.
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # The account's own reading list: what it asked, and what came back. These
+    # are the user's rows, not clinical attestations, so they cascade with it.
+    query_history: Mapped[list["QueryHistory"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.username} role={self.role} plan_id={self.plan_id}>"
@@ -162,6 +173,56 @@ class UsageRecord(Base):
 
     def __repr__(self) -> str:
         return f"<UsageRecord user={self.user_id} at={self.created_at}>"
+
+
+class QueryHistory(Base):
+    """
+    One row per accepted /api/classify call: the question and its answer.
+
+    UsageRecord answers "does this account have quota left" and deliberately
+    stores no content. This table answers "what did this account ask, and what
+    did it get" -- which is what lets a clinician reopen last week's variant
+    without re-typing it, and what lets an administrator see a real query log
+    per account instead of a bare count.
+
+    Reuses the caller's request_id (unique) so a retry cannot double-record any
+    more than it can double-charge, and stores the summary fields rather than
+    the whole payload: a report is reconstructible by re-running the query, and
+    the stored copy would go stale against the evidence anyway.
+    """
+
+    __tablename__ = "query_history"
+    __table_args__ = (
+        Index("ix_query_history_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    query_text: Mapped[str] = mapped_column(String(1000), nullable=False)
+    # None for a gene-overview run, which has no single variant.
+    variant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # End-to-end id of the pipeline run that produced this row. Lets the
+    # trail/pipeline endpoints return only the caller's own run when two
+    # accounts query the same variant_id (see api._history_for_user).
+    # Nullable so pre-migration rows keep working; those rows simply cannot
+    # scope a trail and read as 404 there.
+    trace_id: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    gene: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    classification: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    confidence_numeric: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reasoning_mode: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="query_history")
+
+    def __repr__(self) -> str:
+        return f"<QueryHistory user={self.user_id} variant={self.variant_id}>"
+
+
 class ReviewSignoff(Base):
     """
     A genetic counselor's sign-off on one interpreted variant.
@@ -245,8 +306,14 @@ class PasswordReset(Base):
     def is_usable(self) -> bool:
         """True while this code can still be redeemed."""
         return self.consumed_at is None and _as_utc(self.expires_at) > _utcnow()
+
+    def __repr__(self) -> str:
+        state = "consumed" if self.consumed_at else "live"
+        return f"<PasswordReset user={self.user_id} {state}>"
+
+
 class UpgradeRequest(Base):
-    """
+    r"""
     A request from an account to move to a paid plan.
 
     There is no payment integration, and that is deliberate: this models the
@@ -302,10 +369,6 @@ class UpgradeRequest(Base):
     def __repr__(self) -> str:
         return f"<UpgradeRequest user={self.user_id} plan={self.target_plan_id} {self.status}>"
 
-    def __repr__(self) -> str:
-        state = "consumed" if self.consumed_at else "live"
-        return f"<PasswordReset user={self.user_id} {state}>"
-
 
 # Security events that are worth being able to reconstruct afterwards. This is an
 # append-only record, not a log line: it is what an investigator reads when
@@ -329,6 +392,9 @@ AUTH_EVENT_TYPES = (
     "account_activated",
     "account_deactivated",
     "admin_password_reset",
+    # Reading another account's query log exposes what a person asked, so it is
+    # recorded like any other privileged action rather than left invisible.
+    "admin_read_history",
 )
 
 
@@ -377,3 +443,50 @@ class AuthEvent(Base):
     def __repr__(self) -> str:
         state = "ok" if self.succeeded else "failed"
         return f"<AuthEvent {self.event_type} user={self.user_id} {state}>"
+
+
+class ApiKey(Base):
+    """
+    A long-lived credential for programmatic (machine) access.
+
+    Account tokens are short-lived and bound to a browser session; a lab's LIMS
+    integration cannot re-run a sign-in every hour. An API key fills that gap and
+    is what the plan's ``api_access`` entitlement actually gates.
+
+    Security notes:
+    * Only a SHA-256 digest of the key is stored -- a database leak does not hand
+      out working credentials, exactly as with password-reset codes.
+    * ``prefix`` keeps the first few characters in clear, so a user can tell two
+      keys apart in the UI while the full secret stays unretrievable after issue.
+    * Keys are revoked (``revoked_at``), never deleted, so revocation and
+      ``last_used_at`` stay answerable for the audit trail.
+    """
+
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("ix_api_keys_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    key_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="api_keys")
+
+    @property
+    def is_active(self) -> bool:
+        """True while this key can still authenticate a request."""
+        return self.revoked_at is None
+
+    def __repr__(self) -> str:
+        state = "revoked" if self.revoked_at else "active"
+        return f"<ApiKey {self.prefix}... user={self.user_id} {state}>"

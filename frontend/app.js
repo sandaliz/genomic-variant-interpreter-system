@@ -117,6 +117,205 @@ const SKELETON_LINES =
   + '<div class="skeleton skeleton-line"></div>'
   + '<div class="skeleton skeleton-line short"></div>';
 
+// ---- Transient confirmations ------------------------------------------
+// Several actions used to complete in total silence -- copying the report,
+// downloading the PDF, recording a sign-off -- so a success was indistinguishable
+// from a click that missed. A toast says "that worked" without navigating away or
+// interrupting whatever the user does next.
+let toastTimer = null;
+
+function showToast(message, kind){
+  const wrap = document.getElementById('toastWrap');
+  if (!wrap || !message) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = message;
+  // One at a time: a second toast replaces the first rather than stacking up.
+  wrap.innerHTML = '';
+  wrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => { if (el.parentNode === wrap) wrap.removeChild(el); }, 260);
+  }, 2800);
+}
+
+// ---- Keyboard shortcuts --------------------------------------------------
+// A query tool earns its keep from the keyboard. "/" focuses the query box the
+// way every search field on the web does, and modifier+Enter runs it without a
+// trip to the mouse. Both are suppressed while a field already has focus, so
+// typing a "/" into a password never jumps the cursor out of it.
+function isTypingTarget(el){
+  if (!el) return false;
+  const tag = (el.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select'
+    || el.isContentEditable === true;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && currentView === 'workspace'
+      && !isTypingTarget(document.activeElement)){
+    const box = document.getElementById('query');
+    if (box){
+      e.preventDefault();
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    }
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter'
+      && currentView === 'workspace' && hasSession()){
+    e.preventDefault();
+    classifyVariant();
+  }
+});
+
+// ---- Command palette -----------------------------------------------------
+// Cmd/Ctrl+K from anywhere. Every entry here also has a button somewhere else:
+// this is a second route to the same actions, not a parallel implementation of
+// them, so the two can never drift apart in behaviour.
+let paletteItems = [];
+let paletteIndex = 0;
+
+function paletteEntries(){
+  const items = [
+    { kind: 'View', label: 'Analyse a variant', desc: 'Open the query workspace',
+      run: () => showView('workspace') },
+    { kind: 'View', label: 'Your profile & plan', desc: 'Account, plan, API keys and compliance log',
+      run: () => showView('profile') },
+  ];
+  if (currentUser && currentUser.user && currentUser.user.role === 'admin'){
+    items.push({ kind: 'View', label: 'Admin dashboard',
+      desc: 'Accounts, upgrade queue and query volume', run: () => showView('admin') });
+  }
+  items.push({ kind: 'View', label: 'Landing page', desc: 'What this is, and what it costs',
+    run: () => showView('landing') });
+
+  EXAMPLES.forEach(({ label, q }) => {
+    items.push({ kind: 'Example', label: q, desc: label + ' — run the full pipeline',
+      run: () => {
+        // Same gate as the landing-page examples: a signed-out visitor is
+        // asked to sign in with the query held, rather than dropped into a
+        // workspace whose first request would come back 401.
+        if (!hasSession()){
+          pendingQuery = q;
+          openAuth('signin');
+          return;
+        }
+        document.getElementById('query').value = q;
+        showView('workspace');
+        classifyVariant();
+      } });
+  });
+
+  if (latestResult){
+    items.push({ kind: 'Action', label: 'Copy report', desc: 'Copy the narrative report to the clipboard',
+      run: () => copyReport() });
+    items.push({ kind: 'Action', label: 'Download PDF', desc: 'Print-ready report with the sign-off block',
+      run: () => downloadPDF() });
+  }
+  items.push({ kind: 'Action', label: 'API documentation', desc: 'Open the interactive OpenAPI reference',
+    run: () => window.open('/docs', '_blank', 'noopener') });
+  if (hasSession()){
+    items.push({ kind: 'Account', label: 'Sign out', desc: 'End this session on this device',
+      run: () => logout() });
+  }
+  return items;
+}
+
+function renderPalette(filter){
+  const list = document.getElementById('paletteList');
+  if (!list) return;
+  const needle = String(filter || '').trim().toLowerCase();
+  paletteItems = paletteEntries().filter(it =>
+    !needle || (it.kind + ' ' + it.label + ' ' + it.desc).toLowerCase().includes(needle));
+  if (paletteIndex >= paletteItems.length) paletteIndex = 0;
+  if (!paletteItems.length){
+    list.innerHTML = '<div class="palette-empty">No command matches “'
+      + escapeHtml(filter) + '”.</div>';
+    return;
+  }
+  list.innerHTML = paletteItems.map((it, i) =>
+    '<button type="button" class="palette-item'
+      + (i === paletteIndex ? ' palette-active' : '') + '"'
+      + ' onmouseenter="paletteHover(' + i + ')"'
+      + ' onclick="paletteChoose(' + i + ')">'
+      + '<span class="palette-kind">' + escapeHtml(it.kind) + '</span>'
+      + '<span class="palette-label">' + escapeHtml(it.label) + '</span>'
+      + '<span class="palette-desc">' + escapeHtml(it.desc) + '</span>'
+      + '</button>').join('');
+}
+
+// Moving the cursor re-marks the existing rows rather than re-rendering them,
+// so the row under the pointer cannot flicker as the markup is replaced.
+function paletteHover(i){
+  if (i === paletteIndex) return;
+  paletteIndex = i;
+  const list = document.getElementById('paletteList');
+  if (!list) return;
+  Array.prototype.forEach.call(list.children, (el, n) => {
+    el.classList.toggle('palette-active', n === i);
+  });
+}
+
+function paletteStep(delta){
+  if (!paletteItems.length) return;
+  paletteIndex = (paletteIndex + delta + paletteItems.length) % paletteItems.length;
+  const input = document.getElementById('paletteInput');
+  renderPalette(input ? input.value : '');
+}
+
+function paletteChoose(index){
+  const item = paletteItems[index];
+  if (!item) return;
+  closePalette();
+  item.run();
+}
+
+function openPalette(){
+  const modal = document.getElementById('paletteModal');
+  const input = document.getElementById('paletteInput');
+  if (!modal || !input) return;
+  paletteIndex = 0;
+  input.value = '';
+  renderPalette('');
+  modal.classList.remove('hidden');
+  setTimeout(() => input.focus(), 30);
+}
+
+function closePalette(){
+  const modal = document.getElementById('paletteModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+(function initPalette(){
+  const modal = document.getElementById('paletteModal');
+  const input = document.getElementById('paletteInput');
+  if (!modal || !input) return;
+  input.addEventListener('input', () => {
+    paletteIndex = 0;
+    renderPalette(input.value);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown'){ e.preventDefault(); paletteStep(1); }
+    else if (e.key === 'ArrowUp'){ e.preventDefault(); paletteStep(-1); }
+    else if (e.key === 'Enter'){ e.preventDefault(); paletteChoose(paletteIndex); }
+    else if (e.key === 'Escape'){ e.preventDefault(); closePalette(); }
+  });
+  // Clicking the backdrop closes it, like every other dialog here.
+  modal.addEventListener('click', e => { if (e.target === modal) closePalette(); });
+})();
+
+document.addEventListener('keydown', e => {
+  if (!((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K'))) return;
+  if (!hasSession()) return;
+  const modal = document.getElementById('paletteModal');
+  if (!modal) return;
+  e.preventDefault();
+  if (modal.classList.contains('hidden')) openPalette(); else closePalette();
+});
+
 // ---- Confirmation dialog ---------------------------------------------
 // Every consequential action goes through here rather than window.prompt /
 // window.confirm / window.alert, which cannot express a required justification,
@@ -484,6 +683,13 @@ function renderSession(me){
     signedOut.classList.remove('hidden');
     signedIn.classList.add('hidden');
     document.getElementById('submitBtn').disabled = true;
+    setRailUsage(null);
+    // A one-time API key must not survive the session that revealed it.
+    clearApiKeyUi();
+    // Nor should one account's reading list survive into the next one.
+    historyItems = [];
+    const panel = document.getElementById('historyPanel');
+    if (panel) panel.classList.add('hidden');
     return;
   }
   signedOut.classList.add('hidden');
@@ -515,6 +721,11 @@ function renderSession(me){
   // Warn in the last 20% so a clinician sees the ceiling before hitting it.
   fill.className = 'quota-fill' + (limit && pct >= 80 ? ' warn' : '');
 
+  // The same entitlement, shown in the rail -- on the screen where a query
+  // actually costs one. It used to be visible only inside the avatar menu, so
+  // the limit arrived as a surprise at the moment it was hit.
+  setRailUsage(me);
+
   // Landing-page copy that should not offer a plan the visitor is already on.
   const heroNote = document.getElementById('heroSignedInNote');
   if (heroNote){
@@ -530,6 +741,37 @@ function renderSession(me){
       ? 'You are on this plan.'
       : 'You are on ' + me.plan.name + '. Switch plans from your account.';
   }
+
+  // The reading list belongs to whoever is signed in, so it is loaded from here
+  // rather than from the workspace view: this runs after sign-in and after every
+  // completed query (refreshSession follows a run), which is exactly when the
+  // list can have gained a row.
+  loadHistory();
+}
+
+// Mirrors the account's plan and quota into the rail. Takes the /api/auth/me
+// payload, or null for a signed-out visitor.
+function setRailUsage(me){
+  const plan = document.getElementById('railPlan');
+  if (!plan) return;
+  const quota = document.getElementById('railQuota');
+  const meter = document.getElementById('railMeter');
+  if (!me){
+    plan.textContent = '—';
+    quota.textContent = 'Sign in to run a query';
+    meter.className = 'quota-fill';
+    meter.style.width = '0';
+    return;
+  }
+  const used = me.usage.used_this_month;
+  const limit = me.usage.monthly_limit;
+  plan.textContent = me.plan.name;
+  quota.textContent = (limit === null || limit === undefined)
+    ? used + ' used · unlimited'
+    : used + ' / ' + limit + ' this month';
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+  meter.className = 'quota-fill' + (limit && pct >= 80 ? ' warn' : '');
+  meter.style.width = pct + '%';
 }
 
 async function refreshSession(opts){
@@ -743,14 +985,16 @@ function logout(){
 // server-side by require_admin(), so hiding anything here is a UI affordance,
 // not a control.
 let adminPlans = [];
+// Per-account 30-day series for the accounts table, keyed by user id. Kept
+// beside the table's other state so a refresh of just the account list (after a
+// plan change) can redraw the sparklines without re-fetching activity.
+let accountActivity = {};
 
 function renderPlanCards(plans){
   const el = document.getElementById('adminPlanCards');
   if (!el) return;
   el.innerHTML = plans.map(p => {
-    const price = p.price_cents === null || p.price_cents === undefined
-      ? 'Custom'
-      : '$' + (p.price_cents / 100).toFixed(2);
+    const price = fmtPrice(p.price_cents);
     const limit = p.is_unlimited ? 'Unlimited' : (p.monthly_query_limit + '/mo');
     // Mark the plan the signed-in user is actually on, if we know it.
     const isCurrent = !!(currentUser && currentUser.plan
@@ -776,17 +1020,92 @@ function renderAdminUsers(users){
   users.forEach(u => {
     const tr = document.createElement('tr');
     if (!u.is_active){ tr.className = 'inactive'; }
+    // Lets the drill-down mark which row it belongs to without re-rendering.
+    tr.dataset.userId = u.id;
+    // The activity map is keyed by user id; JSON object keys are strings even
+    // when they were ints on the way out, so both spellings are tried.
+    const activity = accountActivity[u.id] || accountActivity[String(u.id)];
+    const spark = activity
+      ? '<div class="acct-cell">' + sparkBars(activity.series)
+        + '<span class="acct-total">' + activity.total + ' in 30d</span></div>'
+      : '<span class="acct-total">&mdash;</span>';
     tr.innerHTML =
       '<td><div>' + escapeHtml(u.username) + '</div>'
       + '<div style="color:var(--ink-faint);font-size:11px;">' + escapeHtml(u.email) + '</div>'
-      + '<div style="color:var(--ink-faint);font-size:10.5px;">' + escapeHtml(u.role) + '</div></td>'
+      + '<div style="color:var(--ink-faint);font-size:10.5px;">' + escapeHtml(u.role) + '</div>'
+      + '<button class="acct-open" onclick="openAccount(' + u.id + ')">View queries</button></td>'
       + '<td><select class="admin-select" onchange="adminChangePlan(' + u.id
       + ', this.value, this)">' + planOptions(u.plan_id) + '</select></td>'
       + '<td>' + u.used_this_month + '</td>'
+      + '<td>' + spark + '</td>'
       + '<td><button class="admin-btn" onclick="adminToggleActive(' + u.id + ', '
       + u.is_active + ')">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button></td>';
     body.appendChild(tr);
   });
+}
+
+// ---- Admin drill-down -------------------------------------------------
+// What a person actually asked. The table above is counts; this is the log
+// behind them, and reading it is itself an audited action server-side.
+function renderAccountDetail(body, id){
+  const host = document.getElementById('accountDetail');
+  if (!host) return;
+  const account = body.account || {};
+  const history = body.history || [];
+  const rows = history.length
+    ? history.map(item => '<div class="hist-row">'
+        + '<div class="hist-main">'
+        + '<div class="hist-q">' + escapeHtml(item.query_text) + '</div>'
+        + '<div class="hist-meta mono">'
+        + escapeHtml([item.variant_id || 'no variant id', fmtWhen(item.created_at)]
+            .join(' · '))
+        + '</div></div>'
+        + '<span class="hist-badge ' + histBadgeClass(item.classification) + '">'
+        + escapeHtml(item.classification || 'Unknown') + '</span>'
+        + '</div>').join('')
+    : '<div class="hist-empty">This account has no recorded queries.</div>';
+  host.innerHTML =
+    '<div class="acct-head">'
+    + '<div><div class="acct-name">' + escapeHtml(account.username || ('account ' + id))
+    + '</div><div class="acct-sub">' + escapeHtml(account.email || '')
+    + (account.plan ? ' &middot; ' + escapeHtml(account.plan) : '')
+    + ' &middot; ' + (body.total || 0) + ' recorded queries</div></div>'
+    + '<button class="acct-close" onclick="closeAccount()" aria-label="Close">&times;</button>'
+    + '</div>'
+    + '<div class="acct-section">Last 30 days</div>'
+    + '<div class="chart acct-chart">' + chartBars(body.daily || [], 66) + '</div>'
+    + '<div class="acct-section">Queries</div>'
+    + '<div class="history-list">' + rows + '</div>';
+}
+
+async function openAccount(id){
+  const host = document.getElementById('accountDetail');
+  if (!host) return;
+  // Mark the row this panel belongs to, so the table and the detail read as one
+  // thing rather than a panel that appeared from nowhere.
+  document.querySelectorAll('#adminUserBody tr').forEach(tr => {
+    tr.classList.toggle('row-open', tr.dataset.userId === String(id));
+  });
+  host.classList.remove('hidden');
+  host.innerHTML = '<div class="acct-body">Loading this account\'s queries&hellip;</div>';
+  const res = await authFetch('/api/admin/accounts/' + id + '/history?limit=50');
+  if (!res.ok){
+    // 403 is the expected shape when a non-admin somehow got here; either way
+    // the panel says so rather than sitting empty.
+    host.innerHTML = '<div class="acct-body">Could not load this account\'s queries ('
+      + res.status + ').</div>';
+    return;
+  }
+  renderAccountDetail(await res.json(), id);
+}
+
+function closeAccount(){
+  const host = document.getElementById('accountDetail');
+  if (!host) return;
+  document.querySelectorAll('#adminUserBody tr.row-open')
+    .forEach(tr => tr.classList.remove('row-open'));
+  host.classList.add('hidden');
+  host.innerHTML = '';
 }
 
 async function adminChangePlan(userId, planId, selectEl){
@@ -929,6 +1248,13 @@ async function loadProfile(){
     setFieldValue('pfEmail', me.user.email);
     setFieldValue('pfCurrentPw', '');
     renderPlanBox(me);
+    // Entitlement-gated surfaces. Each renders its own explanatory empty state,
+    // so a Free account sees what the tier buys rather than a blank card.
+    renderApiAccess(me);
+    renderAuditAccess(me);
+    // Deliberately not awaited: the profile is already usable, and the key list
+    // is one small query that should not hold the page open.
+    loadApiKeys().catch(() => {});
   } catch (err){
     if (seq !== loadSeq) return;
     // Log it: the previous version surfaced the failure into a box that
@@ -989,7 +1315,7 @@ function currentPlanSummary(me){
     + '<div class="cp-meta">' + escapeHtml(allowance)
     + (plan.price_cents === null || plan.price_cents === undefined
         ? ' · custom pricing'
-        : ' · $' + (plan.price_cents / 100).toFixed(2) + ' / month')
+        : ' · ' + escapeHtml(fmtPrice(plan.price_cents)) + ' / month')
     + '</div>'
     + (pct !== null
         ? '<div class="cp-usage"><div class="quota-bar">'
@@ -1003,7 +1329,7 @@ function currentPlanSummary(me){
 function renderPlanBox(me){
   const price = p => p.price_cents === null || p.price_cents === undefined
     ? 'Custom pricing'
-    : '$' + (p.price_cents / 100).toFixed(2) + ' / month';
+    : fmtPrice(p.price_cents) + ' / month';
   const limit = p => p.is_unlimited ? 'Unlimited queries'
     : (p.monthly_query_limit + ' queries / month');
   const box = document.getElementById('pfPlanBox');
@@ -1037,8 +1363,28 @@ function renderPlanBox(me){
     return;
   }
 
+  // Where the account currently sits in the catalogue, so the cards below can
+  // tell "upgrade" from "downgrade". Plans are ranked by price, with custom
+  // pricing (no price at all) treated as the top of the range.
+  const rank = p => (p.price_cents === null || p.price_cents === undefined)
+    ? Number.POSITIVE_INFINITY : p.price_cents;
+  const onCatalogue = adminPlans.find(p => p.id === me.plan.id);
+  const currentRank = onCatalogue ? rank(onCatalogue) : null;
+  const isAdmin = me.user.role === 'admin';
+
   const cards = adminPlans.map(p => {
     const current = p.id === me.plan.id;
+    // Only ever offer a step up. A cheaper tier is a downgrade, and an upgrade
+    // request is the wrong instrument for it: nobody asks an administrator for
+    // permission to spend less. An administrator never asks at all -- the
+    // dashboard moves accounts between plans directly, including their own.
+    let action = '';
+    if (!current && !isAdmin && currentRank !== null && rank(p) > currentRank){
+      action = '<button class="btn-primary" onclick="requestUpgrade('
+        + p.id + ')">Request upgrade</button>';
+    } else if (!current && !isAdmin && currentRank !== null){
+      action = '<p class="field-hint">Downgrades are arranged with an administrator.</p>';
+    }
     return '<div class="plan-option' + (current ? ' current' : '') + '">'
       + '<h4>' + escapeHtml(p.name)
       + (current ? ' <span class="plan-badge">current</span>' : '') + '</h4>'
@@ -1049,20 +1395,235 @@ function renderPlanBox(me){
       + '</li><li>API access' + (p.api_access ? '' : ' (not included)')
       + '</li><li>Audit export' + (p.audit_export ? '' : ' (not included)')
       + '</li></ul>'
-      + (current ? ''
-         : '<button class="btn-primary" onclick="requestUpgrade('
-           + p.id + ')">Request upgrade</button>')
+      + action
       + '</div>';
   }).join('');
 
+  const footnote = isAdmin
+    ? 'You are an administrator, so accounts move between plans from the admin '
+      + 'dashboard rather than by request. No payment is taken here.'
+    : 'Upgrade requests go to an administrator, who approves or declines them. '
+      + 'No payment is taken here.';
   box.innerHTML += '<div class="plan-compare">' + cards + '</div>'
-    + '<p class="field-hint">Upgrade requests go to an administrator, who approves '
-    + 'or declines them. No payment is taken here.</p>';
+    + '<p class="field-hint">' + footnote
+    + (isAdmin
+       ? ' <button class="inline-link" onclick="showView(\'admin\')">Open the '
+         + 'admin dashboard</button>' : '')
+    + '</p>';
+}
+
+// ---- Profile: API keys ---------------------------------------------------
+// The key endpoints have existed since the API layer was built, but minting a key
+// meant calling them by hand -- so the Professional tier's headline feature was
+// invisible in the product that sells it. These functions are the UI for it.
+
+// ---- Money -----------------------------------------------------------------
+// Plans are priced in whole US cents in the database (the pricing table in the
+// report is denominated in USD), but the product is sold to Sri Lankan clinics,
+// so every price is rendered in rupees at one indicative rate and rounded to a
+// whole hundred so a converted price never reads like a currency conversion.
+const LKR_PER_USD = 300;
+
+function fmtPrice(cents){
+  if (cents === null || cents === undefined) return 'Custom';
+  const rupees = Math.round((cents / 100) * LKR_PER_USD / 100) * 100;
+  return 'Rs. ' + rupees.toLocaleString('en-LK');
+}
+
+function fmtDate(iso){
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString();
+}
+
+function renderApiAccess(me){
+  const entitled = !!(me && me.entitlements && me.entitlements.api_access);
+  const hint = document.getElementById('apiKeysHint');
+  const form = document.getElementById('apiKeyForm');
+  if (form) form.classList.toggle('hidden', !entitled);
+  if (hint){
+    hint.textContent = entitled
+      ? 'A key lets a script call the API as your account, spending your monthly '
+        + 'query allowance. Scope is the account, so revoke one the moment a '
+        + 'machine stops needing it.'
+      : 'API access is included in the Professional and Enterprise plans. Request '
+        + 'an upgrade below to enable it. Keys created on a higher tier stay '
+        + 'listed here and can still be revoked.';
+  }
+}
+
+async function loadApiKeys(){
+  const box = document.getElementById('apiKeysBox');
+  if (!box) return;
+  const res = await authFetch('/api/keys');
+  if (!res.ok){
+    box.innerHTML = '<div class="keys-empty">Could not load your API keys.</div>';
+    return;
+  }
+  const body = await res.json().catch(() => ({ keys: [] }));
+  const keys = body.keys || [];
+  if (!keys.length){
+    box.innerHTML = '<div class="keys-empty">No keys yet.</div>';
+    return;
+  }
+  box.innerHTML = keys.map(k =>
+    '<div class="key-row">'
+    + '<div><div class="key-name">' + escapeHtml(k.name) + '</div>'
+    + '<div class="key-meta mono">' + escapeHtml(k.prefix) + '… · created '
+    + escapeHtml(fmtDate(k.created_at))
+    + (k.last_used_at
+        ? ' · last used ' + escapeHtml(fmtDate(k.last_used_at))
+        : ' · never used')
+    + '</div></div>'
+    + '<div class="key-actions">'
+    + '<button class="key-revoke" onclick="revokeApiKey(' + k.id + ')">Revoke</button>'
+    + '</div></div>').join('');
+}
+
+function revealApiKey(raw){
+  const wrap = document.getElementById('apiKeyReveal');
+  const code = document.getElementById('apiKeyValue');
+  if (!wrap || !code) return;
+  code.textContent = raw || '';
+  wrap.classList.remove('hidden');
+}
+
+function copyApiKey(){
+  const code = document.getElementById('apiKeyValue');
+  const text = code ? code.textContent : '';
+  if (!text) return;
+  if (!navigator.clipboard || !navigator.clipboard.writeText){
+    showToast('This browser does not allow copying from the page.', 'err');
+    return;
+  }
+  navigator.clipboard.writeText(text)
+    .then(() => showToast('Key copied to the clipboard.'))
+    .catch(() => showToast('Could not copy the key.', 'err'));
+}
+
+async function createApiKey(){
+  if (!currentUser || !currentUser.entitlements || !currentUser.entitlements.api_access){
+    showToast('API access is not included in your plan.', 'err');
+    return;
+  }
+  const input = document.getElementById('apiKeyName');
+  const name = input ? input.value.trim() : '';
+  if (!name){
+    showToast('Give the key a name first.', 'err');
+    if (input) input.focus();
+    return;
+  }
+
+  const answer = await askConfirm({
+    title: 'Create an API key?',
+    message: '“' + name + '” will be able to call the API as your account, spending '
+      + 'your monthly query allowance. The key is shown once and cannot be '
+      + 'recovered, so store it somewhere safe.',
+    confirmLabel: 'Create key',
+  });
+  if (!answer.confirmed) return;
+
+  const res = await authFetch('/api/keys', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok){
+    showToast(describeAuthError(body, 'Could not create the key.'), 'err');
+    return;
+  }
+  if (input) input.value = '';
+  revealApiKey(body.key);
+  await loadApiKeys();
+  showToast('API key created.');
+}
+
+async function revokeApiKey(id){
+  const answer = await askConfirm({
+    title: 'Revoke this API key?',
+    message: 'Anything using this key stops working immediately. This cannot be '
+      + 'undone — you would have to create a new key and update the client using it.',
+    confirmLabel: 'Revoke key',
+    danger: true,
+  });
+  if (!answer.confirmed) return;
+
+  const res = await authFetch('/api/keys/' + id, { method: 'DELETE' });
+  if (!res.ok){
+    const body = await res.json().catch(() => ({}));
+    showToast(describeAuthError(body, 'Could not revoke the key.'), 'err');
+    return;
+  }
+  await loadApiKeys();
+  showToast('API key revoked.');
+}
+
+// Clears anything secret-bearing out of the DOM when the session ends, so a
+// one-time key cannot be left sitting on the page for the next person.
+function clearApiKeyUi(){
+  const reveal = document.getElementById('apiKeyReveal');
+  if (reveal) reveal.classList.add('hidden');
+  const code = document.getElementById('apiKeyValue');
+  if (code) code.textContent = '';
+  const box = document.getElementById('apiKeysBox');
+  if (box) box.innerHTML = '';
+  const name = document.getElementById('apiKeyName');
+  if (name) name.value = '';
+}
+
+// ---- Profile: compliance log --------------------------------------------
+// Gated by the same entitlement the endpoint enforces. The date range is applied
+// server-side, so the file contains exactly the window that was asked for.
+
+function renderAuditAccess(me){
+  const entitled = !!(me && me.entitlements && me.entitlements.audit_export);
+  const hint = document.getElementById('auditHint');
+  const form = document.getElementById('auditForm');
+  if (form) form.classList.toggle('hidden', !entitled);
+  if (hint && !entitled){
+    hint.textContent = 'Audit export is included in the Professional and '
+      + 'Enterprise plans. Request an upgrade below to enable it.';
+  } else if (hint){
+    hint.textContent = 'Your own record: queries run, sign-offs recorded and '
+      + 'authentication events, in a spreadsheet you can hand to an auditor.';
+  }
+}
+
+async function downloadAudit(){
+  const startEl = document.getElementById('auditStart');
+  const endEl = document.getElementById('auditEnd');
+  const start = startEl ? startEl.value : '';
+  const end = endEl ? endEl.value : '';
+  const params = new URLSearchParams();
+  params.set('format', 'csv');
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
+
+  try {
+    const res = await authFetch('/api/export/audit?' + params.toString());
+    if (!res.ok){
+      const body = await res.json().catch(() => ({}));
+      throw new Error(describeAuthError(body, 'Could not export your audit record.'));
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'variantlens-audit'
+      + (start ? '-from-' + start : '')
+      + (end ? '-to-' + end : '') + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('Compliance log downloaded.');
+  } catch (err){
+    showToast(err.message || 'Could not export your audit record.', 'err');
+  }
 }
 // ---- Admin page ------------------------------------------------------
 
 async function loadAdminPage(){
-  // Four calls, one of which aggregates over the usage table. On a cold Neon
+  // Five calls, two of which aggregate over the usage table. On a cold Neon
   // compute start this is the slowest screen in the app, so every region gets a
   // placeholder shaped like the content that is coming.
   const seq = ++loadSeq;
@@ -1072,16 +1633,17 @@ async function loadAdminPage(){
     usageChart: '<div class="skeleton skeleton-block"></div>',
     upgradeQueue: '<div class="skeleton skeleton-row">' + SKELETON_LINES + '</div>'.repeat(2),
     adminPlanCards: '<div class="skeleton skeleton-card"></div>'.repeat(3),
-    adminUserBody: '<tr><td colspan="4">'
+    adminUserBody: '<tr><td colspan="5">'
       + '<div class="skeleton skeleton-line medium"></div></td></tr>'.repeat(4)
   });
 
   try {
-    const [analyticsRes, queueRes, usersRes, plansRes] = await Promise.all([
+    const [analyticsRes, queueRes, usersRes, plansRes, activityRes] = await Promise.all([
       authFetch('/api/admin/analytics'),
       authFetch('/api/admin/upgrade-requests'),
       authFetch('/api/admin/users?limit=100'),
-      authFetch('/api/admin/plans')
+      authFetch('/api/admin/plans'),
+      authFetch('/api/admin/accounts/activity?days=30')
     ]);
     // A clinician reaching this view is expected, not an error to shout about.
     if (analyticsRes.status === 403 || queueRes.status === 403){
@@ -1091,7 +1653,7 @@ async function loadAdminPage(){
     }
     const failed = [
       ['analytics', analyticsRes], ['upgrade requests', queueRes],
-      ['accounts', usersRes], ['plans', plansRes]
+      ['accounts', usersRes], ['plans', plansRes], ['account activity', activityRes]
     ].filter(([, r]) => !r.ok).map(([label, r]) => `${label} (${r.status})`);
     if (failed.length){
       // Previously this returned silently, leaving a blank dashboard with no
@@ -1106,6 +1668,7 @@ async function loadAdminPage(){
     const queue = await queueRes.json();
     const plans = (await plansRes.json()).plans;
     const users = (await usersRes.json()).users;
+    const activity = (await activityRes.json()).accounts || {};
 
     // The user may have navigated away while these were in flight.
     if (seq !== loadSeq) return;
@@ -1115,6 +1678,7 @@ async function loadAdminPage(){
     renderChart(analytics.daily_usage);
     renderQueue(queue);
     adminPlans = plans;
+    accountActivity = activity;
     renderPlanCards(adminPlans);
     renderAdminUsers(users);
     adminMessage('');
@@ -1174,20 +1738,39 @@ function renderStats(a){
     + '<div class="stat-label">' + c.label + '</div></div>').join('');
 }
 
-function renderChart(series){
-  const el = document.getElementById('usageChart');
+// Bar markup for a day series, shared by the dashboard chart, the account
+// drill-down and the signed-in user's own activity strip, so all three read the
+// same: gap-filled bars, a quiet day as a real dip rather than a missing column.
+function chartBars(series, maxHeight){
   const peak = Math.max(...series.map(d => d.queries), 0);
   if (!peak){
-    el.innerHTML = '<div class="chart-empty">No queries recorded in this window yet.</div>';
-    return;
+    return '<div class="chart-empty">No queries recorded in this window yet.</div>';
   }
-  // Gap-filled bars, so a quiet day reads as a real dip rather than vanishing.
-  el.innerHTML = series.map(d =>
+  // The bars live in their own row so the axis can sit underneath them.
+  return '<div class="chart-plot">' + series.map(d =>
     '<div class="chart-col' + (d.queries ? '' : ' zero') + '" style="height:'
-    + Math.max(2, Math.round((d.queries / peak) * 118)) + 'px" title="'
-    + d.date + ': ' + d.queries + ' queries"></div>').join('')
+    + Math.max(2, Math.round((d.queries / peak) * maxHeight)) + 'px" title="'
+    + d.date + ': ' + d.queries + ' queries"></div>').join('') + '</div>'
     + '<div class="chart-axis"><span>' + series[0].date + '</span><span>'
     + series[series.length - 1].date + '</span></div>';
+}
+
+// A compact bar strip for a table cell: same data, no axis, no hover titles
+// competing with the row. A window with nothing in it returns no markup at all
+// rather than a placeholder -- the cell already prints the total beside it, so
+// "no activity" would be said twice.
+function sparkBars(series){
+  const peak = Math.max(...series.map(d => d.queries), 0);
+  if (!peak) return '';
+  return '<span class="acct-spark">' + series.map(d =>
+    '<i class="' + (d.queries ? '' : 'zero') + '" style="height:'
+    + Math.max(2, Math.round((d.queries / peak) * 24)) + 'px"></i>').join('')
+    + '</span>';
+}
+
+function renderChart(series){
+  const el = document.getElementById('usageChart');
+  el.innerHTML = chartBars(series, 118);
 }
 
 
@@ -1502,6 +2085,7 @@ async function saveReview(){
     if (!res.ok) throw new Error(data.detail || 'Could not save review sign-off.');
     latestResult.review_signoff = data.review_signoff;
     updateSignoffStatus(data.review_signoff);
+    showToast('Sign-off recorded for ' + reviewer + '.');
   } catch (err) {
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = err.message;
@@ -1540,6 +2124,7 @@ async function downloadPDF(){
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'variant_interpretation_report.pdf'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('Report downloaded.');
   } catch (err) {
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = err.message;
@@ -1550,7 +2135,20 @@ async function downloadPDF(){
 
 function copyReport(){
   if (!latestResult) return;
-  navigator.clipboard?.writeText(latestResult.report_text || '');
+  const text = latestResult.report_text || '';
+  if (!text){
+    showToast('There is no report text to copy yet.', 'err');
+    return;
+  }
+  // The clipboard API is unavailable on insecure origins, and used to fail
+  // silently here -- the button simply did nothing.
+  if (!navigator.clipboard || !navigator.clipboard.writeText){
+    showToast('This browser does not allow copying from the page.', 'err');
+    return;
+  }
+  navigator.clipboard.writeText(text)
+    .then(() => showToast('Report copied to the clipboard.'))
+    .catch(() => showToast('Could not copy the report.', 'err'));
 }
 
 async function classifyVariant(){
@@ -1568,7 +2166,17 @@ async function classifyVariant(){
   document.getElementById('loading').style.display = 'block';
   document.getElementById('submitBtn').disabled = true;
 
-  const msgs = ['Authenticating request…','Extracting entities…','Retrieving evidence…','Applying classification rules…'];
+  // The stages of the real pipeline, in order. Telling the user which agent is
+  // working is the difference between a spinner and a system that is visibly
+  // doing six things.
+  const msgs = [
+    'Sanitising and parsing the query…',
+    'Supervisor planning the retrieval strategy…',
+    'Retrieving and ranking ClinVar evidence…',
+    'Applying ACMG-style criteria…',
+    'Verifier checking the call against its evidence…',
+    'Writing the report…',
+  ];
   let mi = 0;
   const msgEl = document.getElementById('loadingMsg');
   const timer = setInterval(() => { mi = (mi+1) % msgs.length; msgEl.textContent = msgs[mi]; }, 900);
@@ -1604,12 +2212,500 @@ async function classifyVariant(){
   }
 }
 
+// ---- Agentic control plane --------------------------------------------
+// What the Supervisor planned and what the Verifier concluded, rendered under the
+// verdict they produced. The pipeline is not a fixed chain -- the plan is decided
+// per query, and the Verifier can send a call back once -- so the report says how
+// *this* run was steered rather than describing the pipeline in the abstract.
+const CHECK_LABELS = {
+  evidence_found: 'Evidence was retrieved for this variant',
+  exact_match: 'An exact variant match was found',
+  predictors_complete: 'Functional predictors were available',
+  confidence_justified: 'The stated confidence is earned by the evidence',
+};
+
+function agRow(label, value){
+  return '<div class="ag-row"><span class="ag-k">' + escapeHtml(label) + '</span>'
+    + '<span class="ag-v">' + escapeHtml(value) + '</span></div>';
+}
+
+function renderAgentic(data){
+  const section = document.getElementById('agenticSection');
+  const grid = document.getElementById('agenticGrid');
+  const summary = document.getElementById('agenticSummary');
+  if (!section || !grid) return;
+
+  const a = data.agentic || null;
+  if (!a || !a.plan){
+    section.style.display = 'none';
+    const tl = document.getElementById('agenticTimeline');
+    if (tl) tl.innerHTML = '';
+    return;
+  }
+  section.style.display = 'block';
+  renderTimeline(data);
+
+  const plan = a.plan || {};
+  const ver = a.verification || {};
+  const rounds = a.revision_rounds || 0;
+  const broad = plan.retrieval_mode === 'broad';
+  const budget = plan.verification_budget;
+
+  if (summary){
+    summary.textContent = rounds
+      ? 'Verifier challenged the first call; it was re-stated once.'
+      : (ver.verdict === 'revise'
+          ? 'Verifier asked for a revision the budget did not allow.'
+          : 'Verifier accepted the first call.');
+  }
+
+  const planCard = '<div class="ag-card">'
+    + '<div class="ag-head"><span class="ag-title">Supervisor &middot; plan</span>'
+    + '<span class="ag-tag' + (broad ? ' warn' : '') + '">'
+    + escapeHtml(plan.retrieval_mode) + ' retrieval</span></div>'
+    + '<div class="ag-rows">'
+    + agRow('Query type', plan.query_type)
+    + agRow('Intent', plan.intent)
+    + agRow('Revision budget', (budget === null || budget === undefined) ? '—'
+        : budget + (budget === 1 ? ' round' : ' rounds'))
+    + '</div>'
+    + '<p class="ag-reason">' + escapeHtml(plan.reason || '') + '</p>'
+    + '</div>';
+
+  const checks = (ver.checks || []).map(c => {
+    // A check that failed and one that was simply not required are different
+    // findings, so they are not given the same mark.
+    const cls = c.passed ? '' : (c.optional ? ' skip' : ' fail');
+    const label = CHECK_LABELS[c.check] || String(c.check || '').replace(/_/g, ' ');
+    const note = (!c.passed && c.optional)
+      ? ' <span class="ag-k">(not required in ' + escapeHtml(plan.retrieval_mode || 'this')
+        + ' mode)</span>'
+      : '';
+    return '<li class="ag-check' + cls + '">' + escapeHtml(label) + note + '</li>';
+  }).join('');
+
+  const issues = ver.issues || [];
+  const issueBlock = issues.length
+    ? '<div class="ag-issues"><b>The verifier raised:</b> '
+      + issues.map(escapeHtml).join(' &middot; ') + '</div>'
+    : '';
+
+  // Did the second pass actually change the number? The confidence is the only
+  // thing self-correction may move, so the report says explicitly what moved and
+  // what did not.
+  const clsStep = (data.pipeline_steps || [])
+    .filter(s => s.agent === 'classification_agent').pop();
+  const revised = !!(clsStep && clsStep.output && clsStep.output.confidence_revised);
+  const note = rounds
+    ? '<div class="ag-note">'
+      + (revised
+          ? '<b>Self-correction applied.</b> The first call asserted more confidence than '
+            + 'the retrieved evidence earns, so it was re-stated conservatively. Final '
+            + 'confidence ' + escapeHtml(fmtNum(data.confidence_numeric, 0)) + '/100 ('
+            + escapeHtml(data.confidence || '') + '). The categorical classification was not '
+            + 'changed — self-correction can only withdraw confidence, never add it.'
+          : '<b>Checked twice.</b> The call was re-examined after the revision round and no '
+            + 'further change was needed.')
+      + '</div>'
+    : '';
+
+  grid.innerHTML = planCard
+    + '<div class="ag-card">'
+    + '<div class="ag-head"><span class="ag-title">Verifier &middot; verdict</span>'
+    + '<span class="ag-tag' + (ver.verdict === 'accept' ? '' : ' warn') + '">'
+    + escapeHtml(ver.verdict) + (rounds ? ' after revision' : '') + '</span></div>'
+    + '<ul class="ag-checks">' + checks + '</ul>'
+    + issueBlock + note
+    + '</div>';
+}
+
+// ---- Run timeline --------------------------------------------------------
+// The pipeline as it actually ran, in order -- not the six boxes the landing
+// page draws. It is also where the self-correction loop becomes visible: when
+// the verifier sent the call back, the classification row is marked "revised"
+// and the verifier row carries the verdict that followed the second pass.
+const AGENT_LABELS = {
+  intake_agent: 'Intake',
+  supervisor_agent: 'Supervisor',
+  evidence_retrieval_agent: 'Evidence retrieval',
+  classification_agent: 'Classification',
+  verifier_agent: 'Verifier',
+  report_agent: 'Reporting',
+};
+
+function timelineDetail(step, data){
+  const a = data.agentic || {};
+  const plan = a.plan || {};
+  const ver = a.verification || {};
+  const out = step.output || {};
+  switch (step.agent){
+    case 'supervisor_agent': {
+      const budget = plan.verification_budget;
+      return escapeHtml(plan.retrieval_mode || 'targeted') + ' retrieval &middot; revision budget '
+        + (budget === null || budget === undefined ? '—' : escapeHtml(String(budget)))
+        + (budget === 1 ? ' round' : ' rounds');
+    }
+    case 'evidence_retrieval_agent': {
+      const m = data.ir_metadata || {};
+      if (m.top_k_returned === undefined || m.top_k_returned === null){
+        return 'evidence retrieved and ranked';
+      }
+      return escapeHtml(String(m.top_k_returned)) + ' of '
+        + escapeHtml(String(m.candidates_retrieved ?? '?')) + ' candidates returned';
+    }
+    case 'classification_agent':
+      return (out.confidence_revised
+          ? 're-stated conservatively: confidence '
+          : 'confidence ')
+        + escapeHtml(fmtNum(data.confidence_numeric, 0)) + '/100 &middot; '
+        + escapeHtml(data.classification || '');
+    case 'verifier_agent': {
+      const issues = (ver.issues || []).length;
+      return 'verdict: ' + escapeHtml(ver.verdict || out.verdict || 'accept')
+        + (issues
+            ? ' &middot; ' + issues + ' issue' + (issues === 1 ? '' : 's') + ' raised'
+            : ' &middot; no issues raised');
+    }
+    case 'report_agent':
+      return 'report written &middot; sign-off block opened';
+    default:
+      return escapeHtml(step.stage || '');
+  }
+}
+
+function renderTimeline(data){
+  const host = document.getElementById('agenticTimeline');
+  if (!host) return;
+  const steps = data.pipeline_steps || [];
+  if (!steps.length){ host.innerHTML = ''; return; }
+  host.innerHTML = steps.map(step => {
+    const out = step.output || {};
+    // The verifier's revision round leaves its mark on the classification row,
+    // so the second pass is stated rather than folded into an unmarked number.
+    const revised = step.agent === 'classification_agent' && !!out.confidence_revised;
+    const label = AGENT_LABELS[step.agent]
+      || String(step.agent || '').replace(/_/g, ' ');
+    return '<div class="tl-step' + (revised ? ' tl-revised' : '') + '">'
+      + '<span class="tl-dot"></span>'
+      + '<div class="tl-body">'
+      + '<div class="tl-name">' + escapeHtml(label)
+      + (revised ? '<span class="tl-badge">revised</span>' : '')
+      + '</div>'
+      + '<div class="tl-detail">' + timelineDetail(step, data) + '</div>'
+      + '</div></div>';
+  }).join('');
+}
+
+// ---- ACMG criterion chips ------------------------------------------------
+// Plain-English meanings for the codes, so a clinician who does not hold the
+// 2015 ACMG/AMP paper in their head can read the row. The suffix matters as much
+// as the code: this project applies ACMG-*style* proxies computed from its own
+// data, and the chip says which is which.
+const ACMG_GLOSSARY = {
+  PVS1: 'Very strong evidence of pathogenicity: a null variant (nonsense, frameshift or canonical splice site) in a gene where loss of function is a known disease mechanism.',
+  PS1: 'Strong evidence: the same amino-acid change as a variant already established as pathogenic.',
+  PS2: 'Strong evidence: confirmed de novo in a patient with the disease.',
+  PS3: 'Strong evidence: well-established functional studies show a damaging effect.',
+  PS4: 'Strong evidence: the variant is more common in affected individuals than in controls.',
+  PM1: 'Moderate evidence: the variant sits in a mutational hot spot or a critical functional domain.',
+  PM2: 'Moderate evidence: absent from, or extremely rare in, population databases.',
+  PM3: 'Moderate evidence: found in trans with a pathogenic variant in a recessive disease.',
+  PM4: 'Moderate evidence: a protein-length change that is not a null variant.',
+  PM5: 'Moderate evidence: a different amino-acid change at a position already known to be pathogenic.',
+  PM6: 'Moderate evidence: assumed de novo, but parentage was not confirmed.',
+  PP1: 'Supporting evidence: co-segregation with the disease in multiple affected family members.',
+  PP2: 'Supporting evidence: a missense change in a gene where missense changes are a common cause.',
+  PP3: 'Supporting evidence: multiple computational predictors agree the variant is damaging.',
+  PP4: 'Supporting evidence: the patient’s phenotype is highly specific for a single-gene disorder.',
+  PP5: 'Supporting evidence: a reputable source reports the variant as pathogenic. Supporting only, never a substitute for the underlying evidence.',
+  BA1: 'Stand-alone benign evidence: allele frequency above the disease-specific threshold.',
+  BS1: 'Strong benign evidence: allele frequency greater than expected for the disorder.',
+  BS2: 'Strong benign evidence: seen in a healthy adult who would be expected to be affected.',
+  BS3: 'Strong benign evidence: well-established functional studies show no damaging effect.',
+  BS4: 'Strong benign evidence: no segregation with the disease in affected family members.',
+  BP1: 'Supporting benign evidence: a missense change in a gene where only truncating variants cause disease.',
+  BP2: 'Supporting benign evidence: seen in trans with a pathogenic variant, or in cis with one.',
+  BP3: 'Supporting benign evidence: an in-frame change in a repetitive region with no known function.',
+  BP4: 'Supporting benign evidence: multiple computational predictors agree the variant has no impact.',
+  BP5: 'Supporting benign evidence: the variant is in a case that has another molecular explanation for the disease.',
+  BP6: 'Supporting benign evidence: a reputable source reports the variant as benign.',
+  BP7: 'Supporting benign evidence: a synonymous change with no predicted effect on splicing.',
+};
+
+const CRIT_CODE_RE = /^\s*(PVS1|PS[1-4]|PM[1-6]|PP[1-5]|BA1|BS[1-4]|BP[1-7])(_(?:equivalent|strong|moderate|supporting))?\b/i;
+
+function critChip(raw){
+  const text = String(raw);
+  const m = text.match(CRIT_CODE_RE);
+  const code = m ? m[1].toUpperCase() : null;
+  const modifier = m && m[2] ? m[2].replace(/^_/, '') : null;
+  const rest = m ? text.slice(m[0].length).replace(/^\s*[:\-]?\s*/, '') : text;
+  const isProxy = modifier === 'equivalent';
+  const meaning = code ? (ACMG_GLOSSARY[code] || 'An ACMG/AMP criterion code.') : null;
+
+  const flags = [];
+  if (isProxy) flags.push('proxy');
+  if (!code) flags.push('unknown');
+
+  const pop = meaning
+    ? '<span class="chip-pop">'
+      + '<span class="chip-pop-h">' + escapeHtml(code)
+      + (modifier ? ' &middot; ' + escapeHtml(modifier) : '') + '</span>'
+      + '<span class="chip-pop-p">' + escapeHtml(meaning) + '</span>'
+      + (isProxy
+          ? '<span class="chip-pop-p chip-pop-flag">Applied here as an ACMG-style '
+            + 'proxy computed from this project’s own data, not as a curator’s '
+            + 'assertion.</span>'
+          : '')
+      + '</span>'
+    : '';
+
+  return '<span class="crit-chip' + (flags.length ? ' ' + flags.join(' ') : '')
+    + '" tabindex="0">'
+    + (code ? '<b>' + escapeHtml(code) + '</b>' : escapeHtml(text.split(' (')[0]))
+    + (rest ? ' <span class="chip-detail">' + escapeHtml(rest) + '</span>' : '')
+    + pop
+    + '</span>';
+}
+
+// ---- Confidence breakdown ------------------------------------------------
+// A bare bar says "72". This says 72 out of what: the gauge repeats the headline
+// number, the bars show the inputs the score was computed from, and the tags
+// carry the two judgement calls (submitter consistency, predictor agreement)
+// that no single number can express.
+const CONSISTENCY_LABELS = {
+  submitter_agreement: 'Submitters agree',
+  conflicting_submitter_evidence: 'Submitters disagree',
+};
+
+const PREDICTOR_LABELS = {
+  sift_deleterious_polyphen_damaging: 'SIFT + PolyPhen: damaging',
+  sift_tolerated_polyphen_benign: 'SIFT + PolyPhen: benign',
+  mixed_predictors: 'Predictors disagree',
+  not_available: 'Predictors unavailable',
+};
+
+// What each predictor outcome is worth, mirroring the scorer. The API returns
+// the verdict as a word and does not repeat its point value, so the bar needs
+// the table here to draw the same number the score was built from.
+const PREDICTOR_POINTS = {
+  sift_deleterious_polyphen_damaging: 20,
+  sift_tolerated_polyphen_benign: 15,
+  mixed_predictors: 5,
+  not_available: 0,
+};
+
+function cbBar(label, value, max){
+  const pct = max ? Math.max(0, Math.min(100, Math.round((value / max) * 100))) : 0;
+  return '<div class="cb-comp">'
+    + '<div class="cb-comp-head">'
+    + '<span class="cb-comp-name">' + escapeHtml(label) + '</span>'
+    + '<span class="cb-comp-val">' + escapeHtml(String(value)) + ' / '
+    + escapeHtml(String(max)) + '</span></div>'
+    + '<div class="cb-bar"><div class="cb-bar-fill" style="width:' + pct + '%"></div></div>'
+    + '</div>';
+}
+
+function renderConfidence(data){
+  const host = document.getElementById('confBreakdown');
+  if (!host) return;
+  const comps = data.confidence_components || null;
+  if (!comps){
+    // A cached result written before this field existed carries no breakdown.
+    // Saying nothing is better than drawing an empty widget.
+    host.classList.add('hidden');
+    host.innerHTML = '';
+    return;
+  }
+
+  const pct = Math.max(0, Math.min(100, Number(data.confidence_numeric) || 0));
+  const colors = classColors(data.classification);
+  // Circumference of the r=26 ring the gauge is drawn on.
+  const circumference = 2 * Math.PI * 26;
+  const offset = circumference * (1 - pct / 100);
+
+  const tags = [];
+  if (comps.clinvar_consistency){
+    const key = String(comps.clinvar_consistency);
+    const warn = key.indexOf('conflict') !== -1;
+    tags.push('<span class="cb-tag' + (warn ? ' warn' : '') + '">'
+      + escapeHtml(CONSISTENCY_LABELS[key] || key.replace(/_/g, ' ')) + '</span>');
+  }
+  const predictorKey = comps.predictor_agreement ? String(comps.predictor_agreement) : '';
+  if (predictorKey){
+    const weak = predictorKey === 'mixed_predictors' || predictorKey === 'not_available';
+    tags.push('<span class="cb-tag' + (weak ? ' warn' : '') + '">'
+      + escapeHtml(PREDICTOR_LABELS[predictorKey] || predictorKey.replace(/_/g, ' ')) + '</span>');
+  }
+  // The scorer docks points for every predictor column that was empty. That
+  // subtraction is the difference between a low score and a bad variant, so it
+  // is stated rather than left for the reader to infer from a small bar.
+  const penalty = Number(comps.unavailable_evidence_penalty) || 0;
+  if (penalty > 0){
+    tags.push('<span class="cb-tag warn">Missing predictor data &minus;'
+      + escapeHtml(String(penalty)) + ' points</span>');
+  }
+
+  const ver = (data.agentic && data.agentic.verification) || null;
+  const justified = ver
+    ? (ver.checks || []).find(c => c.check === 'confidence_justified')
+    : null;
+  const note = justified && !justified.passed
+    ? 'The verifier did not accept this confidence as earned by the evidence — '
+      + 'see the control plane below for what it raised.'
+    : (ver
+        ? 'The verifier checked that this confidence is earned by the evidence it '
+          + 'rests on. Confidence reflects evidence strength, not medical certainty.'
+        : 'Confidence reflects evidence strength, not medical certainty.');
+
+  host.classList.remove('hidden');
+  host.innerHTML = '<div class="cb-grid">'
+    + '<div class="cb-fig">'
+    + '<svg class="cb-svg" viewBox="0 0 64 64" width="76" height="76" aria-hidden="true">'
+    + '<circle class="cb-ring" cx="32" cy="32" r="26"></circle>'
+    + '<circle class="cb-arc" cx="32" cy="32" r="26" style="stroke:' + colors.fill
+    + ';stroke-dasharray:' + circumference.toFixed(1)
+    + ';stroke-dashoffset:' + offset.toFixed(1) + '"></circle>'
+    + '</svg>'
+    + '<div class="cb-fig-value">' + escapeHtml(fmtNum(pct, 0)) + '</div>'
+    + '</div>'
+    + '<div class="cb-comps">'
+    + (comps.evidence_strength === undefined ? ''
+        : cbBar('Evidence strength', comps.evidence_strength, 40))
+    + (comps.supporting_records === undefined ? ''
+        : cbBar('Supporting records', comps.supporting_records, 20))
+    + (!predictorKey ? ''
+        : cbBar('Predictor agreement', PREDICTOR_POINTS[predictorKey] || 0, 20))
+    + (tags.length ? '<div class="cb-tags">' + tags.join('') + '</div>' : '')
+    + '</div></div>'
+    + '<p class="cb-note">' + note + '</p>';
+}
+
+// ---- Query history -------------------------------------------------------
+// The account's own runs. Reopening a row re-runs the query rather than
+// restoring a cached report: the stored row carries the question, not the
+// answer, so what comes back is computed against current evidence instead of
+// replayed from a copy that may have been overtaken by a ClinVar update.
+let historyItems = [];
+
+// "Today 14:03" beats a bare date for anything recent, which is most of what
+// this list holds.
+function fmtWhen(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  const startOfDay = value => new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+  const time = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  if (days <= 0) return 'Today ' + time;
+  if (days === 1) return 'Yesterday ' + time;
+  if (days < 7) return days + ' days ago';
+  return d.toLocaleDateString();
+}
+
+function histBadgeClass(classification){
+  const value = String(classification || '').toLowerCase();
+  if (value.includes('pathogenic')) return 'path';
+  if (value.includes('benign')) return 'benign';
+  if (value.includes('uncertain') || value.includes('vus')) return 'vus';
+  return '';
+}
+
+async function loadHistory(){
+  const panel = document.getElementById('historyPanel');
+  if (!panel) return;
+  if (!hasSession()){
+    panel.classList.add('hidden');
+    return;
+  }
+  const res = await authFetch('/api/history?limit=12');
+  if (!res.ok){
+    // History is a convenience, never the point of the page: if it cannot be
+    // read, say nothing rather than putting an error above the report.
+    panel.classList.add('hidden');
+    return;
+  }
+  renderHistory(await res.json());
+}
+
+function renderHistory(body){
+  const panel = document.getElementById('historyPanel');
+  const list = document.getElementById('historyList');
+  const spark = document.getElementById('historySpark');
+  const count = document.getElementById('historyCount');
+  if (!panel || !list) return;
+
+  historyItems = body.history || [];
+  if (!historyItems.length){
+    panel.classList.add('hidden');
+    return;
+  }
+
+  if (count){
+    const total = body.total || historyItems.length;
+    count.textContent = total > historyItems.length
+      ? 'last ' + historyItems.length + ' of ' + total
+      : total + (total === 1 ? ' query' : ' queries');
+  }
+
+  if (spark){
+    const series = body.daily || [];
+    const peak = series.length ? Math.max(...series.map(d => d.queries), 0) : 0;
+    spark.innerHTML = peak
+      ? series.map(d => '<div class="spark-col' + (d.queries ? '' : ' zero')
+          + '" style="height:' + Math.max(2, Math.round((d.queries / peak) * 44))
+          + 'px" title="' + d.date + ': ' + d.queries + ' queries"></div>').join('')
+      : '';
+  }
+
+  list.innerHTML = historyItems.map((item, index) => {
+    const confidence = (item.confidence_numeric === null
+      || item.confidence_numeric === undefined)
+      ? '—' : String(Math.round(item.confidence_numeric));
+    const meta = [
+      item.gene || 'unknown gene',
+      item.variant_id || 'no variant id',
+      fmtWhen(item.created_at),
+    ].join(' · ');
+    return '<div class="hist-row">'
+      + '<div class="hist-main">'
+      + '<div class="hist-q">' + escapeHtml(item.query_text) + '</div>'
+      + '<div class="hist-meta mono">' + escapeHtml(meta) + '</div>'
+      + '</div>'
+      + '<span class="hist-badge ' + histBadgeClass(item.classification) + '">'
+      + escapeHtml(item.classification || 'Unknown') + '</span>'
+      + '<span class="hist-conf" title="confidence: '
+      + escapeHtml(item.confidence || 'none') + '">' + escapeHtml(confidence) + '</span>'
+      + '<button class="hist-open" onclick="rerunHistory(' + index + ')">Re-run</button>'
+      + '</div>';
+  }).join('');
+
+  panel.classList.remove('hidden');
+}
+
+function rerunHistory(index){
+  const item = historyItems[index];
+  if (!item) return;
+  document.getElementById('query').value = item.query_text;
+  showView('workspace');
+  classifyVariant();
+}
+
 function renderResult(data){
   document.getElementById('results').style.display = 'block';
+  renderAgentic(data);
+  renderConfidence(data);
 
   document.getElementById('repVariantId').textContent = data.variant_id || '—';
   document.getElementById('repTimestamp').textContent = new Date().toLocaleString();
-  document.getElementById('repMode').textContent = 'Reasoning: ' + (data.reasoning_mode === 'llm' ? 'LLM-assisted' : 'Rule-based');
+  // The stamp line doubles as the run's at-a-glance summary: which engine
+  // reasoned, how the supervisor chose to retrieve, and whether the verifier
+  // sent the call back. The detail is in the control-plane panel below.
+  const agentics = data.agentic || {};
+  document.getElementById('repMode').textContent =
+    'Reasoning: ' + (data.reasoning_mode === 'llm' ? 'LLM-assisted' : 'Rule-based')
+    + (agentics.plan ? ' · ' + agentics.plan.retrieval_mode + ' retrieval' : '')
+    + (agentics.revision_rounds ? ' · self-corrected once' : '');
 
   // Assemble every caveat the pipeline flagged into one banner, so the
   // human-review and coverage flags are surfaced instead of being dropped.
@@ -1724,10 +2820,9 @@ function renderResult(data){
   critList.innerHTML = '';
   const acmgOnly = data.acmg_criteria_applied || data.criteria_applied || [];
   if (acmgOnly.length){
-    acmgOnly.forEach(c => {
-      const parts = String(c).split(' (');
-      critList.innerHTML += '<span class="crit-chip"><b>'+escapeHtml(parts[0])+'</b>'+(parts[1] ? ' ('+escapeHtml(parts[1]) : '')+'</span>';
-    });
+    // Each chip carries the code, this project's own reason for applying it, and
+    // a plain-English reading of the criterion on hover or keyboard focus.
+    acmgOnly.forEach(c => { critList.innerHTML += critChip(c); });
   } else {
     critList.innerHTML = '<span class="section-sub">None. No definitive pathogenic or benign ACMG criterion was met.</span>';
   }
@@ -1813,6 +2908,150 @@ function renderResult(data){
   }
 }
 
+// ---- The pipeline, on the landing page ---------------------------------
+// Six agents the visitor can pick apart instead of six paragraphs to skim. The
+// copy here is deliberately the mechanism, not the marketing: what each agent
+// takes in, what it hands on, and which of the two is allowed to send work back.
+const FLOW_STEPS = [
+  {
+    name: 'Intake',
+    role: 'Parses the request',
+    does: 'Takes the free-text question and pulls the structured entities out of it — '
+      + 'gene, HGVS expression, rsID, protein change. Anything it cannot read as a '
+      + 'variant is reported as unparsed rather than guessed at, so a typo fails '
+      + 'here instead of silently retrieving the wrong record.',
+    inbound: 'the clinician\'s question',
+    outbound: 'gene · variant · identifiers',
+    status: 'Runs first, and rejects before any retrieval work is paid for.',
+  },
+  {
+    name: 'Supervisor',
+    role: 'Plans the run',
+    does: 'Decides how this particular question should be answered: a targeted '
+      + 'retrieval when a single variant is named, a broad one when the question is '
+      + 'about a gene, and how much verification the result is worth. The plan is '
+      + 'written into the audit trail before the work starts, so the reasoning can be '
+      + 'read afterwards rather than inferred.',
+    inbound: 'parsed entities',
+    outbound: 'retrieval mode · verification budget',
+    status: 'Why two runs of the same question can take different routes.',
+  },
+  {
+    name: 'Evidence retrieval',
+    role: 'Ranks the evidence',
+    does: 'Scores the committed ClinVar index against the query with TF-IDF vectors '
+      + 'and cosine similarity, then returns the top-k records with their scores. '
+      + 'Lexical retrieval is a deliberate choice over a neural one: every ranking '
+      + 'decision can be shown to a reviewer as arithmetic.',
+    inbound: 'query terms · planned mode',
+    outbound: 'top-k scored records',
+    status: 'The same index for every run — no live external calls.',
+  },
+  {
+    name: 'Classification',
+    role: 'Applies the criteria',
+    does: 'Maps the retrieved evidence onto ACMG-style criteria — population '
+      + 'frequency, functional predictors, submitter agreement, consequence — and '
+      + 'produces a call with a confidence score built from named components, so a '
+      + 'disagreement about the answer can be traced to the evidence it rests on.',
+    inbound: 'scored evidence',
+    outbound: 'classification · confidence breakdown',
+    status: 'Runs on rules alone, or LLM-assisted when the plan allows it.',
+  },
+  {
+    name: 'Verifier',
+    role: 'Challenges the call',
+    does: 'Re-reads the call against the evidence that produced it and looks for the '
+      + 'specific failure of claiming more certainty than the evidence supports. It '
+      + 'gets one round, and the only direction it may move a call is towards '
+      + 'caution — it can never talk the system into a bolder verdict.',
+    inbound: 'call + its evidence',
+    outbound: 'confirmed, or one revision',
+    status: 'The loop back to Classification: bounded, and conservative-only.',
+  },
+  {
+    name: 'Report',
+    role: 'Writes it up',
+    does: 'Assembles the final report: the verdict, the evidence table, the '
+      + 'confidence components, the retrieval metadata, any caveats the pipeline '
+      + 'raised, and the full encrypted message trail between agents — so the answer '
+      + 'arrives with its working attached.',
+    inbound: 'verified call',
+    outbound: 'report · audit trail',
+    status: 'What is downloadable as a PDF and what the signed-in console shows.',
+  },
+];
+
+let flowIndex = 0;
+let flowTimer = null;
+
+function paintFlow(i){
+  const step = FLOW_STEPS[i];
+  const panel = document.getElementById('flowPanel');
+  if (!step || !panel) return;
+  flowIndex = i;
+  document.querySelectorAll('#flowTrack .flow-node').forEach((el, n) => {
+    const on = n === i;
+    el.classList.toggle('flow-active', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  panel.innerHTML =
+    '<div class="flow-panel-head">'
+    + '<span class="flow-panel-name">' + escapeHtml(step.name) + '</span>'
+    + '<span class="flow-panel-role">' + escapeHtml(step.role) + '</span>'
+    + '</div>'
+    + '<p class="flow-panel-body">' + escapeHtml(step.does) + '</p>'
+    + '<div class="flow-io">'
+    + '<span class="flow-chip"><b>In</b> ' + escapeHtml(step.inbound) + '</span>'
+    + '<span class="flow-chip"><b>Out</b> ' + escapeHtml(step.outbound) + '</span>'
+    + '</div>'
+    + '<div class="flow-status">' + escapeHtml(step.status) + '</div>';
+}
+
+function renderFlow(){
+  const track = document.getElementById('flowTrack');
+  const panel = document.getElementById('flowPanel');
+  if (!track) return;
+  // The buttons claim role="tab" and point here, so the panel answers to it.
+  if (panel) panel.setAttribute('role', 'tabpanel');
+  track.innerHTML = FLOW_STEPS.map((step, i) =>
+    (i ? '<span class="flow-arrow" aria-hidden="true">&rarr;</span>' : '')
+    + '<button type="button" role="tab" class="flow-node' + (i === 0 ? ' flow-active' : '')
+    + '" aria-selected="' + (i === 0 ? 'true' : 'false')
+    + '" aria-controls="flowPanel" onclick="selectFlow(' + i + ')">'
+    + '<div class="flow-num">' + String(i + 1).padStart(2, '0') + '</div>'
+    + '<div class="flow-name">' + escapeHtml(step.name) + '</div>'
+    + '<div class="flow-role">' + escapeHtml(step.role) + '</div>'
+    + '</button>').join('');
+  paintFlow(0);
+}
+
+function stopFlowAuto(){
+  if (flowTimer){ clearInterval(flowTimer); flowTimer = null; }
+}
+
+// Selecting a step is the visitor taking over, so the idle cycle stops for good
+// rather than fighting them for the panel a second later.
+function selectFlow(i){
+  stopFlowAuto();
+  paintFlow(i);
+}
+
+function initFlow(){
+  renderFlow();
+  const still = window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // An auto-advancing panel is motion; the diagram has to work without it.
+  if (still || !document.getElementById('flowTrack')) return;
+  flowTimer = setInterval(() => {
+    const landing = document.getElementById('viewLanding');
+    // No point redrawing a section nobody is looking at.
+    if (landing && landing.classList.contains('hidden')) return;
+    paintFlow((flowIndex + 1) % FLOW_STEPS.length);
+  }, 3600);
+}
+
 // Restore an existing session on load (if the stored token is still valid) and
 // otherwise land on the marketing page with sign-in available in the header.
+initFlow();
 refreshSession();

@@ -2,8 +2,12 @@
 
 **File:** `protocol/message.py` · **Security:** `protocol/security.py` · **Transport layer:** `api.py`
 
-This document is the single reference for how the four agents in this system talk
-to each other. It is written to be readable on its own during the viva.
+This document is the single reference for how the agents in this system talk to
+each other. It is written to be readable on its own during the viva.
+
+The pipeline has **four specialist agents** (Intake, Evidence Retrieval,
+Classification, Report) plus **two control agents** (Supervisor, Verifier) that
+plan a run and check its result. All six speak the one protocol below.
 
 ---
 
@@ -28,8 +32,8 @@ Defined as a `@dataclass` in `protocol/message.py`.
 | Field | Type | Required | Default | Purpose |
 |---|---|---|---|---|
 | `variant_id` | `str` | ✅ | — | Subject of the message, e.g. `BRCA1:NC_000017.10:g.41197778A>G` |
-| `stage` | `str` | ✅ | — | Pipeline stage label (`intake_complete`, `evidence_retrieved`, `classification_complete`, `report_complete`) |
-| `sender` | `str` | ✅ | — | Agent that produced the message (`intake_agent`, `evidence_retrieval_agent`, …) |
+| `stage` | `str` | ✅ | — | Pipeline stage label (`intake_complete`, `evidence_retrieved`, `classification_complete`, `report_complete`, `plan_ready`, `verification_complete`) |
+| `sender` | `str` | ✅ | — | Agent that produced the message (`intake_agent`, `evidence_retrieval_agent`, `supervisor_agent`, …) |
 | `receiver` | `str` | | `""` | Intended recipient agent; `""` means broadcast/orchestrator |
 | `message_type` | `str` | | `SYSTEM_LOG` | Semantic type — see §3 |
 | `trace_id` | `str` | | 12-char UUID | End-to-end ID shared by **every** message in one pipeline run |
@@ -63,8 +67,29 @@ asked, and *which run* asked it.
 | `MessageType.CLASSIFICATION_RESULT` | `CLASSIFICATION_RESULT` | Classification → Report: label, confidence, criteria |
 | `MessageType.REPORT_RESULT` | `REPORT_RESULT` | Report → Orchestrator: final narrative + disclaimer |
 | `MessageType.EVIDENCE_ERROR` / `CLASSIFICATION_ERROR` / `REPORT_ERROR` | … | Explicit failure signalling per stage |
+| `MessageType.PLAN` | `PLAN` | Supervisor → pipeline: the per-query plan (retrieval mode + verification budget) |
+| `MessageType.VERIFICATION_RESULT` | `VERIFICATION_RESULT` | Verifier → Supervisor: the critique of a classification and any revision directive |
 | `MessageType.QUERY_ACK` | `QUERY_ACK` | Acknowledgement |
 | `MessageType.SYSTEM_LOG` | `SYSTEM_LOG` | Default for non-pipeline/system messages |
+
+### Agentic control messages
+
+Two message types carry the **control plane** rather than the data plane. They
+use the same envelope and the same encryption as every other message, so the
+system's planning and self-correction are auditable alongside its results.
+
+| | `PLAN` | `VERIFICATION_RESULT` |
+|---|---|---|
+| **Sender** | `supervisor_agent` | `verifier_agent` |
+| **Receiver** | `pipeline` | `supervisor_agent` |
+| **Stage** | `plan_ready` | `verification_complete` |
+| **Decides** | how broadly to retrieve and how strictly to verify | whether the classification is accepted or re-stated |
+| **Payload** | `query_type`, `intent`, `retrieval_mode` (`broad`/`targeted`), `verification_budget`, `reason` | `verdict` (`accept`/`revise`), `directive` (`conservative`/`null`), `checks`, `issues` |
+
+A `revise` verdict is applied at most once per run — `verification_budget` in the
+`PLAN` is what bounds the loop. When the Classification Agent is asked to revise,
+it emits a **second** `CLASSIFICATION_RESULT` on the same `trace_id`, so the audit
+trail shows both the original call and the corrected one.
 
 ---
 
@@ -104,6 +129,10 @@ Agent 1: Intake Agent            sender=intake_agent
    │   type=VARIANT_QUERY  stage=intake_complete
    │   to=evidence_retrieval_agent   encrypted=True
    ▼
+Supervisor                       sender=supervisor_agent
+   │   type=PLAN  stage=plan_ready
+   │   to=pipeline  encrypted=True    (retrieval_mode + verification_budget)
+   ▼
 Agent 2: Evidence Retrieval      sender=evidence_retrieval_agent
    │   type=EVIDENCE_RESULT  stage=evidence_retrieved
    │   to=classification_agent  encrypted=True
@@ -112,7 +141,15 @@ Agent 3: Classification          sender=classification_agent
    │   type=CLASSIFICATION_RESULT  stage=classification_complete
    │   to=report_agent  encrypted=True
    ▼
-Agent 4: Report                  sender=report_agent
+Agent 4: Verifier                sender=verifier_agent
+   │   type=VERIFICATION_RESULT  stage=verification_complete
+   │   to=supervisor_agent  encrypted=True
+   │
+   ├── verdict=accept ───────────────────────────────► Report Agent
+   └── verdict=revise  ─► Classification re-run with the "conservative"
+                          directive, then verified once more (never twice)
+   ▼
+Agent 5: Report                  sender=report_agent
    │   type=REPORT_RESULT  stage=report_complete
    │   to=orchestrator  encrypted=True
    ▼
@@ -149,16 +186,21 @@ Decrypted payload (what the Evidence Agent reads after `decrypt_payload()`):
 }
 ```
 
-### Messages 2–4 — same envelope, different `message_type` / `stage`
+### Messages — same envelope, different `message_type` / `stage`
 
 | # | sender → receiver | message_type | stage |
 |---|---|---|---|
-| 2 | `evidence_retrieval_agent` → `classification_agent` | `EVIDENCE_RESULT` | `evidence_retrieved` |
-| 3 | `classification_agent` → `report_agent` | `CLASSIFICATION_RESULT` | `classification_complete` |
-| 4 | `report_agent` → `orchestrator` | `REPORT_RESULT` | `report_complete` |
+| 1 | `intake_agent` → `evidence_retrieval_agent` | `VARIANT_QUERY` | `intake_complete` |
+| 2 | `supervisor_agent` → `pipeline` | `PLAN` | `plan_ready` |
+| 3 | `evidence_retrieval_agent` → `classification_agent` | `EVIDENCE_RESULT` | `evidence_retrieved` |
+| 4 | `classification_agent` → `report_agent` | `CLASSIFICATION_RESULT` | `classification_complete` |
+| 5 | `verifier_agent` → `supervisor_agent` | `VERIFICATION_RESULT` | `verification_complete` |
+| 6 | `report_agent` → `orchestrator` | `REPORT_RESULT` | `report_complete` |
 
-All four messages share the **same `trace_id`**, which is what makes the audit
-trail reconstructable (`MessageLog.trail_for(trace_id)`).
+All messages share the **same `trace_id`**, which is what makes the audit
+trail reconstructable (`MessageLog.trail_for(trace_id)`). A run that was revised
+has one extra `CLASSIFICATION_RESULT` on that trace, immediately before the
+second `VERIFICATION_RESULT` — the self-correction is part of the record.
 
 ---
 
@@ -194,8 +236,8 @@ Exposed over HTTP (authentication required):
 | `POST` | `/api/auth/login` | Exchange credentials for a JWT | — |
 | `GET` | `/api/auth/me` | Account, plan, usage, entitlements | `Bearer` |
 | `POST` | `/api/classify` | Run the 4-agent pipeline (quota-metered) | `Bearer` |
-| `POST` | `/api/report/pdf` | Print-ready PDF of a report | — |
-| `POST` / `GET` | `/api/review/{variant_id}` | Save / fetch human review sign-off | — |
+| `POST` | `/api/report/pdf` | Print-ready PDF of a report | `Bearer` |
+| `POST` / `GET` | `/api/review/{variant_id}` | Save / fetch human review sign-off | `Bearer` |
 | `GET` | `/api/pipeline/{variant_id}` | Full pipeline + audit detail | `Bearer` |
 | `GET` | `/api/trail/{variant_id}` | Agent-to-agent audit trail | `Bearer` |
 | `GET` | `/api/admin/users` | Read-only account listing | `Bearer` + `admin` |

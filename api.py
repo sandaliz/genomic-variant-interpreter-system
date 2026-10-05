@@ -16,7 +16,7 @@ import os
 import sys
 import json
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -25,9 +25,10 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from io import BytesIO
+from io import BytesIO, StringIO
+import csv
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -50,7 +51,18 @@ from auth.schemas import (
 from auth.security import hash_password
 from auth.routes import router as auth_router
 from db.database import get_db
-from db.models import ALLOWED_ROLES, Plan, ReviewSignoff, UPGRADE_STATUSES, UpgradeRequest, User
+from db.models import (
+    ALLOWED_ROLES,
+    AuthEvent,
+    Plan,
+    QueryHistory,
+    ReviewSignoff,
+    UPGRADE_STATUSES,
+    UpgradeRequest,
+    UsageRecord,
+    User,
+)
+from services.api_key_service import issue_key, keys_for, revoke_key
 from services.entitlement_service import (
     check_quota,
     entitlements,
@@ -58,7 +70,13 @@ from services.entitlement_service import (
     record_usage,
     usage_this_month,
 )
-from services.analytics_service import build_analytics
+from services.analytics_service import build_analytics, daily_usage_by_user
+from services.history_service import (
+    daily_history_series,
+    history_count,
+    history_for_user,
+    record_history,
+)
 from services.mailer import get_mailer
 from services.upgrade_service import (
     create_request as upgrade_create,
@@ -134,12 +152,46 @@ def _history_for(variant_id: str) -> list:
     under a rules-only plan lands in a different log than an LLM-plan query.
     Searching both keeps /api/trail and /api/pipeline complete regardless of
     which plan handled the original request.
+
+    NOTE (known limitation, see SECURITY.md): these logs are process-local
+    and keyed by variant_id only. Ownership scoping to the calling account
+    happens in _history_for_user() below, which intersects this set with the
+    caller's own query_history rows.
     """
     seen = {}
     for system in (_system_llm, _system_rules):
         for message in system.log.history_for(variant_id):
             seen[message.message_id] = message
     return sorted(seen.values(), key=lambda m: str(m.timestamp))
+
+
+def _history_for_user(db: Session, user_id: int, variant_id: str) -> list:
+    """Return only the caller's own runs of this variant.
+
+    The in-memory MessageLog is keyed by variant_id only, so a variant-level
+    membership check is not enough: when two accounts query the same variant,
+    each would receive the other's decrypted payloads and raw_query. Ownership
+    therefore comes from the per-run record -- the trace_id stored on the
+    caller's query_history rows at classify time -- and only messages whose
+    trace_id the caller owns are returned. Rows predating the trace_id column
+    (NULL) can never match, so they read as 404 here: fail-closed.
+    Admins keep the same rule -- the register view is /api/reviews.
+    """
+    own_trace_ids = {
+        row.trace_id
+        for row in db.scalars(
+            select(QueryHistory).where(
+                QueryHistory.user_id == user_id,
+                QueryHistory.variant_id == variant_id,
+            )
+        ).all()
+        if row.trace_id
+    }
+    if not own_trace_ids:
+        return []
+    return [
+        m for m in _history_for(variant_id) if m.trace_id in own_trace_ids
+    ]
 
 # Demo API key used by the agent layer when the API calls into main.py.
 # Review sign-offs live in PostgreSQL (see db/models.py ReviewSignoff), not in a
@@ -229,6 +281,15 @@ class FullPipelineResponse(BaseModel):
     population_observation: Optional[str] = None
     pipeline_steps: list
     audit_trail: list
+    # Agentic control plane: the Supervisor's plan and the Verifier's verdict (and
+    # how many revision rounds were spent), so an API consumer can see the
+    # system's reasoning about its own run, not only its results.
+    agentic: Optional[dict] = None
+    # The inputs the confidence score was built from (evidence strength,
+    # submitter consistency, supporting records, predictor agreement). Exposed so
+    # the UI can show *why* a number is what it is -- the report text has always
+    # carried this breakdown, but a client rendering its own view could not.
+    confidence_components: Optional[dict] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -290,6 +351,15 @@ class QueryResponse(BaseModel):
     population_observation: Optional[str] = None
     pipeline_steps: list
     audit_trail: list
+    # Agentic control plane: the Supervisor's plan and the Verifier's verdict (and
+    # how many revision rounds were spent), so an API consumer can see the
+    # system's reasoning about its own run, not only its results.
+    agentic: Optional[dict] = None
+    # The inputs the confidence score was built from (evidence strength,
+    # submitter consistency, supporting records, predictor agreement). Exposed so
+    # the UI can show *why* a number is what it is -- the report text has always
+    # carried this breakdown, but a client rendering its own view could not.
+    confidence_components: Optional[dict] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -446,6 +516,10 @@ def classify(
         request_id,
         current_user.plan.monthly_query_limit,
     )
+    # The account's own reading list. Best-effort by design: the report above is
+    # already produced and valid, and losing a convenience row must not turn a
+    # successful classification into an error response.
+    record_history(db, current_user.id, request_id, request.query, result)
     ent = entitlements(current_user, usage_this_month(db, current_user.id))
 
     # The report response carries the sign-off inline so the UI can render the
@@ -468,6 +542,8 @@ def classify(
         population_observation=result.get("population_observation"),
         pipeline_steps=result["pipeline_steps"],
         audit_trail=result["audit_trail"],
+        agentic=result.get("agentic"),
+        confidence_components=result.get("confidence_components"),
         top_k_results=result["top_k_results"],
         ir_metadata=result["ir_metadata"],
         responsible_ai=result["responsible_ai"],
@@ -579,9 +655,37 @@ def list_review_signoffs(
             "review_signoffs": [_signoff_payload(row) for row in rows]}
 
 
+def _pdf_text(value) -> str:
+    """Escape a caller- or database-supplied string for ReportLab markup.
+
+    ReportLab Paragraphs interpret a small HTML subset (<b>, <i>, <br/>),
+    so an unescaped ``<script>`` or stray ``<`` in variant_id / reviewer
+    fields would be parsed as markup. The criteria/annotation/context rows
+    below already escape inline; this helper applies the same rule to the
+    header and sign-off fields so every interpolated value is treated as
+    literal text.
+    """
+    return (
+        str(value if value is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 @app.post("/api/report/pdf")
-async def create_pdf_report(request: PDFReportRequest, db: Session = Depends(get_db)):
-    """Create a print-ready academic clinical-style report PDF."""
+async def create_pdf_report(
+    request: PDFReportRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a print-ready academic clinical-style report PDF.
+
+    Authenticated like every other per-account endpoint: a caller must prove
+    who they are, and the stored sign-off lookup below is scoped by variant,
+    so anonymous PDF generation (and anonymous enumeration of reviewer
+    names/signatures by variant_id) is refused with 401.
+    """
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42,
@@ -602,7 +706,7 @@ async def create_pdf_report(request: PDFReportRequest, db: Session = Depends(get
     story = [
         Paragraph("Genomic Variant Interpretation Report", title),
         Paragraph("VariantLens · IT3041 academic decision-support prototype", subtitle),
-        Paragraph(f"<b>Variant:</b> {request.variant_id}", body),
+        Paragraph(f"<b>Variant:</b> {_pdf_text(request.variant_id)}", body),
         Spacer(1, 8),
     ]
     pdf_row = db.scalars(
@@ -696,9 +800,9 @@ async def create_pdf_report(request: PDFReportRequest, db: Session = Depends(get
         story.append(et)
     story += [
         Paragraph("Review / sign-off", h2),
-        Paragraph(f"Reviewer / genetic counselor: {reviewer_name or '________________________________'}", body),
+        Paragraph(f"Reviewer / genetic counselor: {_pdf_text(reviewer_name) if reviewer_name else '________________________________'}", body),
         Spacer(1, 8),
-        Paragraph(f"Review date: {review_date or '__________________'}    Signature: {signature or '_______________________________'}", body),
+        Paragraph(f"Review date: {_pdf_text(review_date) if review_date else '__________________'}    Signature: {_pdf_text(signature) if signature else '_______________________________'}", body),
         Spacer(1, 14),
         Paragraph("<b>Important:</b> This document is generated by an academic decision-support prototype. "
                   "Classification confidence is not medical certainty. It does not provide a medical diagnosis, "
@@ -720,12 +824,21 @@ async def create_pdf_report(request: PDFReportRequest, db: Session = Depends(get
 
 
 @app.get("/api/pipeline/{variant_id}")
-def get_pipeline(variant_id: str, current_user: User = Depends(get_current_user)):
+def get_pipeline(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Get the full pipeline result and audit trail for a previously queried variant.
     Requires a valid JWT (Authorization: Bearer).
+
+    Scoped to the caller's own runs by trace_id: a variant another account
+    queried -- or the same variant queried by two accounts -- returns only the
+    caller's own messages here, so no account can read another account's
+    decrypted payloads or raw_query.
     """
-    messages = _history_for(variant_id)
+    messages = _history_for_user(db, current_user.id, variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No pipeline data found for {variant_id}")
 
@@ -748,9 +861,16 @@ def get_pipeline(variant_id: str, current_user: User = Depends(get_current_user)
 
 
 @app.get("/api/trail/{variant_id}")
-def get_trail(variant_id: str, current_user: User = Depends(get_current_user)):
-    """Get the full agent-to-agent message audit trail for a variant."""
-    messages = _history_for(variant_id)
+def get_trail(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the full agent-to-agent message audit trail for a variant.
+
+    Same ownership rule as /api/pipeline: only the caller's own runs.
+    """
+    messages = _history_for_user(db, current_user.id, variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No trail found for {variant_id}")
     return [
@@ -954,6 +1074,67 @@ def admin_list_users(
             "users": [_admin_user_payload(db, u) for u in users]}
 
 
+@app.get("/api/admin/accounts/activity")
+def admin_account_activity(
+    days: int = 30,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-account query activity for the dashboard's accounts table.
+
+    One call, every account: the table draws a sparkline per row, and fetching a
+    series per row would turn one screen into N round-trips. Accounts with no
+    usage in the window are absent from ``accounts`` rather than present with
+    zeros -- the caller renders an empty sparkline, and absence here is a real
+    signal (nothing ran) rather than a fetch that failed.
+
+    Kept as its own endpoint rather than added to ``/api/admin/analytics`` so the
+    existing dashboard payload keeps exactly the shape its consumers expect.
+    """
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
+    return {"window_days": days, "accounts": daily_usage_by_user(db, days)}
+
+
+@app.get("/api/admin/accounts/{account_id}/history")
+def admin_account_history(
+    account_id: int,
+    limit: int = Query(50, description="How many recent runs to return (1-200)."),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    One account's actual query log, for the administrator's drill-down.
+
+    Reading this is an audited action: it exposes what a person asked, so the
+    read is recorded against the administrator who made it in the same way a
+    privilege change is. The response carries the account's 30-day series as well,
+    so opening a row is one request rather than two.
+    """
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    account = db.get(User, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    record(db, "admin_read_history", user_id=account.id,
+           actor_user_id=current_user.id,
+           detail=f"read query history for {account.username}")
+
+    return {
+        "account": {
+            "id": account.id,
+            "username": account.username,
+            "email": account.email,
+            "plan": account.plan.name if account.plan else None,
+        },
+        "total": history_count(db, account.id),
+        "history": history_for_user(db, account.id, limit),
+        "daily": daily_history_series(db, account.id, 30),
+    }
+
+
 @app.get("/api/admin/plans")
 def admin_list_plans(
     current_user: User = Depends(require_admin),
@@ -1119,6 +1300,252 @@ def admin_reset_password(
     # The response deliberately says nothing beyond the outcome: never echo the
     # new password, and never return the hash.
     return {"reset": True, "username": target.username}
+
+
+@app.get("/api/history")
+def my_history(
+    limit: int = Query(20, description="How many recent runs to return (1-50)."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    The caller's own recent runs, newest first.
+
+    Deliberately available on every plan and not entitlement-gated: reading back
+    what you asked is not a premium feature, and the row count is small. It
+    returns only the caller's own rows, so it cannot be used to enumerate another
+    account's work, and it stores no report text -- reopening a run re-runs it
+    against current evidence rather than replaying a stale answer.
+
+    ``daily`` carries the same gap-filled 30-day series the admin dashboard draws,
+    so the workspace can show the account its own activity without a second call.
+    """
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 50")
+    return {
+        "total": history_count(db, current_user.id),
+        "history": history_for_user(db, current_user.id, limit),
+        "daily": daily_history_series(db, current_user.id, 30),
+    }
+
+
+@app.get("/api/export/audit")
+def export_audit(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    start: Optional[str] = Query(
+        None, description="Earliest date to include, ISO 8601 (YYYY-MM-DD)."),
+    end: Optional[str] = Query(
+        None, description="Latest date to include, ISO 8601 (YYYY-MM-DD), inclusive."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Export the caller's own audit record (usage, sign-offs, auth events).
+
+    This is the endpoint behind the "Audit export" line on the Professional and
+    Enterprise plans, so it is gated by the ``audit_export`` entitlement rather
+    than merely advertised. It deliberately returns only the caller's own rows --
+    an account can audit itself, never another account.
+
+    ``format=csv`` returns a flat, spreadsheet-friendly file; ``format=json``
+    returns the same rows with their full field set.
+
+    ``start`` and ``end`` narrow the export to a date window. This is the normal
+    shape of a compliance request ("give me the quarter"), and filtering on the
+    server keeps the file faithful to the range that was asked for instead of
+    sending everything and trusting the caller to trim it.
+    """
+    if not current_user.plan.audit_export:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Audit export is not included in your plan. Upgrade to "
+                   "Professional or Enterprise to enable it.",
+        )
+
+    def _parse_bound(value: str, is_end: bool) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date '{value}'. Use ISO 8601, e.g. 2026-07-01.",
+            )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        # A bare date means a whole day, so `end=2026-09-30` must still include
+        # the rows written on the 30th rather than stopping at midnight.
+        if is_end and len(value.strip()) <= 10:
+            parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+        return parsed
+
+    lower = _parse_bound(start, False) if start else None
+    upper = _parse_bound(end, True) if end else None
+
+    def _in_window(row, attr: str) -> bool:
+        stamp = getattr(row, attr)
+        if stamp is None:
+            return True
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if lower is not None and stamp < lower:
+            return False
+        if upper is not None and stamp > upper:
+            return False
+        return True
+
+    usage_rows = db.scalars(
+        select(UsageRecord)
+        .where(UsageRecord.user_id == current_user.id)
+        .order_by(UsageRecord.created_at)
+    ).all()
+    signoff_rows = db.scalars(
+        select(ReviewSignoff)
+        .where(ReviewSignoff.reviewed_by == current_user.id)
+        .order_by(ReviewSignoff.saved_at)
+    ).all()
+    event_rows = db.scalars(
+        select(AuthEvent)
+        .where(AuthEvent.user_id == current_user.id)
+        .order_by(AuthEvent.created_at)
+    ).all()
+
+    if lower is not None or upper is not None:
+        usage_rows = [row for row in usage_rows if _in_window(row, "created_at")]
+        signoff_rows = [row for row in signoff_rows if _in_window(row, "saved_at")]
+        event_rows = [row for row in event_rows if _in_window(row, "created_at")]
+
+    if format == "csv":
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["section", "timestamp", "detail"])
+        for row in usage_rows:
+            writer.writerow([
+                "usage",
+                row.created_at.isoformat(),
+                f"{row.query_count} query"
+                + (f", {row.llm_tokens_used} tokens" if row.llm_tokens_used else ""),
+            ])
+        for row in signoff_rows:
+            writer.writerow([
+                "review_signoff",
+                row.saved_at.isoformat(),
+                f"{row.variant_id} by {row.reviewer_name} on {row.review_date.isoformat()}",
+            ])
+        for row in event_rows:
+            writer.writerow([
+                "auth_event",
+                row.created_at.isoformat(),
+                f"{row.event_type} ({'ok' if row.succeeded else 'failed'})"
+                + (f": {row.detail}" if row.detail else ""),
+            ])
+        filename = f"variantlens-audit-{current_user.username}.csv"
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    return {
+        "user": current_user.username,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        # Echo the window back, so the file explains its own scope when it is
+        # opened months later by someone who did not run the export.
+        "range": {"start": start, "end": end},
+        "usage": [
+            {
+                "created_at": row.created_at.isoformat(),
+                "query_count": row.query_count,
+                "llm_tokens_used": row.llm_tokens_used,
+            }
+            for row in usage_rows
+        ],
+        "review_signoffs": [
+            {
+                "variant_id": row.variant_id,
+                "reviewer_name": row.reviewer_name,
+                "review_date": row.review_date.isoformat(),
+                "saved_at": row.saved_at.isoformat(),
+            }
+            for row in signoff_rows
+        ],
+        "auth_events": [
+            {
+                "event_type": row.event_type,
+                "created_at": row.created_at.isoformat(),
+                "succeeded": row.succeeded,
+                "detail": row.detail,
+                "client_ip": row.client_ip,
+            }
+            for row in event_rows
+        ],
+    }
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80,
+                      description="A label so the user can tell keys apart, e.g. 'LIMS integration'.")
+
+
+def _api_key_payload(row) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "prefix": row.prefix,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        "revoked": row.revoked_at is not None,
+    }
+
+
+@app.post("/api/keys", status_code=status.HTTP_201_CREATED)
+def create_api_key(
+    body: ApiKeyCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Mint an API key for programmatic access.
+
+    Requires the plan's ``api_access`` entitlement (Professional/Enterprise). The
+    plaintext key is returned **once** in the ``key`` field and never stored --
+    only its digest is persisted -- so if it is lost it must be revoked and
+    replaced rather than recovered.
+    """
+    if not current_user.plan.api_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API access is not included in your plan. Upgrade to "
+                   "Professional or Enterprise to create API keys.",
+        )
+    row, raw = issue_key(db, current_user, body.name)
+    return {**_api_key_payload(row), "key": raw}
+
+
+@app.get("/api/keys")
+def list_api_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    List the caller's API keys (metadata only, never the secret).
+
+    Readable regardless of plan so that an account which has downgraded can still
+    see and revoke the keys it created while it was entitled.
+    """
+    rows = keys_for(db, current_user)
+    return {"total": len(rows), "keys": [_api_key_payload(row) for row in rows]}
+
+
+@app.delete("/api/keys/{key_id}")
+def revoke_api_key(
+    key_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke one of the caller's own API keys. Idempotent-safe: 404 if unknown."""
+    if not revoke_key(db, current_user, key_id):
+        raise HTTPException(status_code=404, detail="API key not found or already revoked.")
+    return {"revoked": True, "id": key_id}
 
 
 if __name__ == "__main__":

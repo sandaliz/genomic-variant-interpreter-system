@@ -541,6 +541,22 @@ class ClassificationAgent:
         # preserve order while removing duplicates
         return list(dict.fromkeys(normalized))
 
+    # Evidence keys withheld from the LLM prompt. prior_classification (and its
+    # review fields) is ClinVar's aggregate label, which is also the evaluation
+    # ground truth -- sending it to the model would let the LLM answer by lookup
+    # rather than by reasoning. The rules and the consensus reconciliation keep
+    # the prior; only the LLM prompt loses it.
+    _LLM_WITHHELD_KEYS = frozenset({
+        "prior_classification",
+        "prior_review_status",
+        "prior_review_stars",
+    })
+
+    @classmethod
+    def _evidence_for_llm(cls, evidence: dict) -> dict:
+        """Return the evidence bundle minus the ClinVar prior label."""
+        return {k: v for k, v in evidence.items() if k not in cls._LLM_WITHHELD_KEYS}
+
     def classify_with_llm(self, evidence: dict) -> tuple:
         """
         Send the raw evidence to Gemini and ask it to apply ACMG-style
@@ -550,8 +566,10 @@ class ClassificationAgent:
         Returns:
             (result_dict, used_llm_bool)
         """
-        # Build a compact evidence summary for the prompt
-        evidence_summary = json.dumps(evidence, indent=2, default=str)
+        # Build a compact evidence summary for the prompt. The ClinVar prior
+        # label is withheld (see _LLM_WITHHELD_KEYS): it is also the ground
+        # truth, so the model must reason from functional evidence, not copy it.
+        evidence_summary = json.dumps(self._evidence_for_llm(evidence), indent=2, default=str)
 
         system_instruction = (
             "You are a clinical genetic variant classification assistant applying "
@@ -851,7 +869,42 @@ class ClassificationAgent:
         result["consensus"] = block
         return result
 
-    def classify(self, evidence_message: AgentMessage, message_log) -> AgentMessage:
+    def apply_conservative_directive(self, result: dict, evidence: dict) -> dict:
+        """Re-state a call more conservatively, on the Verifier's instruction.
+
+        This is the Classification Agent's half of the self-correction loop. The
+        Verifier can send a call back when its confidence is not earned by the
+        evidence (no exact match and no reviewed consensus). We respond by
+        *lowering the number*, which -- because the label is derived from the
+        number -- lowers the label with it.
+
+        Two deliberate limits make this safe:
+
+        * **It only ever caps, never raises.** Self-correction must not be able
+          to manufacture certainty, only to withdraw it.
+        * **It never changes the categorical classification.** Whether a variant
+          is Pathogenic or VUS is an evidence judgement; the Verifier is not
+          entitled to overturn it on consistency grounds alone. Only the
+          confidence attached to it moves.
+        """
+        numeric = float(result.get("confidence_numeric") or 0.0)
+        consensus_backed = (
+            (result.get("consensus") or {}).get("final_from") == "clinvar_consensus"
+        )
+        if (not evidence.get("exact_match") and not consensus_backed
+                and numeric >= self.CONF_MODERATE_BAR):
+            numeric = min(numeric, self.CONF_MODERATE_BAR - 0.1)
+            result["confidence_numeric"] = round(numeric, 1)
+            result["confidence"] = self._confidence_level(numeric)
+            result["confidence_revised"] = True
+            result["confidence_revision_reason"] = (
+                "Verifier: confidence capped because the classification is not "
+                "backed by an exact variant match or a reviewed consensus."
+            )
+        return result
+
+    def classify(self, evidence_message: AgentMessage, message_log,
+                 directive: str | None = None) -> AgentMessage:
         # Decrypt the incoming payload (it was encrypted by the Evidence Agent)
         evidence = evidence_message.decrypt_payload()
 
@@ -880,6 +933,12 @@ class ClassificationAgent:
         result = self.reconcile_with_consensus(result, evidence)
         if result.get("consensus", {}).get("final_from") == "clinvar_consensus":
             result["reasoning_mode"] = "clinvar_consensus"
+
+        # Self-correction: the Verifier may have sent this call back. Re-state it
+        # conservatively before it reaches the Report Agent. Bounded by design --
+        # the directive only ever lowers the confidence number.
+        if directive == "conservative":
+            result = self.apply_conservative_directive(result, evidence)
 
         message = AgentMessage(
             variant_id=evidence_message.variant_id,

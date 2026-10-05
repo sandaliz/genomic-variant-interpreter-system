@@ -33,3 +33,9 @@ scikit-learn==1.8.0
 reportlab==4.4.9
 cryptography==46.0.4
 google-genai==2.18.1
+
+# --- MCP tool server (OPTIONAL) ---
+# Only needed to run `python mcp_server.py`. The API does not import it, so it is
+# deliberately left out of the runtime set. Uncomment (or add an extra layer) if
+# you want MCP tooling in the same image:
+# mcp>=1.0

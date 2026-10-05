@@ -90,7 +90,7 @@ def decide(db: Session, request: UpgradeRequest, decision: str,
     if decision not in DECIDABLE_STATUSES:
         raise UpgradeError(
             f"decision must be one of: {', '.join(DECIDABLE_STATUSES)}.",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     if not request.is_open:
         raise UpgradeError(

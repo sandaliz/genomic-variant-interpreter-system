@@ -76,6 +76,51 @@ class ReportAgent:
         self.llm = GeminiClient(fast_mode=fast_mode, enable_llm_cache=enable_llm_cache)
         self.batch_llm = batch_llm  # Combine summarization + report generation
 
+    # Marker the template path always appends, and the post-check below
+    # appends to an LLM report that dropped it. A single source so the two
+    # paths can never disagree on the wording.
+    TEMPLATE_DISCLAIMER = (
+        "IMPORTANT DISCLAIMER: This is an academic decision-support prototype. "
+        "It does not provide medical diagnoses or replace qualified genetic "
+        "counselors, clinicians, or laboratory interpretation. Genetic test "
+        "results must always be interpreted within the broader context of a "
+        "patient's clinical and family history by a qualified healthcare "
+        "professional. This tool is not intended for standalone clinical use."
+    )
+
+    @staticmethod
+    def verify_llm_report(report_text: str, classification: str,
+                           confidence: str, confidence_numeric) -> list:
+        """Check an LLM-written report carries the right call and disclaimer.
+
+        The prompt asks for all three, but asking is not verifying. Returns a
+        list of issue strings (empty = clean) covering: the classification
+        label appears verbatim, the numeric confidence appears, and the
+        decision-support disclaimer is present. Cheap regex/substring checks,
+        not a second LLM judge.
+        """
+        issues = []
+        text = report_text or ""
+        if classification and str(classification) not in text:
+            issues.append("classification label missing or altered")
+        try:
+            numeric_token = str(float(confidence_numeric)).rstrip("0").rstrip(".")
+        except (TypeError, ValueError):
+            numeric_token = None
+        if numeric_token and numeric_token not in text:
+            issues.append("confidence number missing or altered")
+        if "decision-support" not in text.lower() and "decision support" not in text.lower():
+            issues.append("decision-support disclaimer missing")
+        return issues
+
+    @classmethod
+    def ensure_disclaimer(cls, report_text: str) -> str:
+        """Append the template disclaimer when the LLM dropped it."""
+        if "decision-support" in (report_text or "").lower() or \
+                "decision support" in (report_text or "").lower():
+            return report_text
+        return (report_text or "").rstrip() + "\n\n" + cls.TEMPLATE_DISCLAIMER
+
     @staticmethod
     def _display(value):
         if value is None:
@@ -92,12 +137,14 @@ class ReportAgent:
     # ------------------------------------------------------------------
     def summarize_evidence(self, evidence: dict) -> str:
         """
-        NLP technique: extractive summarization of the evidence bundle.
+        NLP technique: structured evidence summarization of the evidence bundle.
 
         Condenses the raw evidence dict into a concise, human-readable
         summary that highlights the most clinically relevant facts.
-        This is a deterministic extractive summarizer (no LLM needed),
-        which is transparent and auditable.
+        This is a deterministic data-to-text summarizer (no LLM needed),
+        which is transparent and auditable: it renders labelled fields rather
+        than extracting sentences, so it is described as structured
+        summarization rather than extractive summarization.
         """
         if not evidence.get("found"):
             return "No matching evidence record found in the database."
@@ -155,7 +202,7 @@ class ReportAgent:
 
         Sends the evidence + classification to Gemini and asks it to
         produce a concise 2-3 sentence clinical summary. Falls back to
-        the extractive summarizer if the LLM call fails.
+        the structured summarizer if the LLM call fails.
         """
         evidence_summary = json.dumps(evidence, indent=2, default=str)
         result_summary = json.dumps(result, indent=2, default=str)
@@ -182,7 +229,7 @@ class ReportAgent:
             )
             return summary.strip()
         except (RuntimeError, ConnectionError, TimeoutError) as e:
-            # Fallback to extractive summarization for API/Network errors
+            # Fallback to structured summarization for API/Network errors
             return self.summarize_evidence(evidence)
 
     # ------------------------------------------------------------------
@@ -381,14 +428,7 @@ class ReportAgent:
                 )
 
             lines.append("")
-            lines.append(
-                "IMPORTANT DISCLAIMER: This is an academic decision-support prototype. "
-                "It does not provide medical diagnoses or replace qualified genetic "
-                "counselors, clinicians, or laboratory interpretation. Genetic test "
-                "results must always be interpreted within the broader context of a "
-                "patient's clinical and family history by a qualified healthcare "
-                "professional. This tool is not intended for standalone clinical use."
-            )
+            lines.append(self.TEMPLATE_DISCLAIMER)
 
         return "\n".join(lines)
 
@@ -455,7 +495,24 @@ class ReportAgent:
                 system_instruction=system_instruction,
                 max_tokens=768,  # Reduced from 1024 for faster response
             )
-            return report.strip()
+            # Post-check, not just prompt-asking: verify the LLM carried the
+            # right classification, the numeric confidence and the disclaimer.
+            # A dropped disclaimer is repaired; other issues fall back to the
+            # template so a wrong number can never ship unverified.
+            issues = self.verify_llm_report(
+                report, result.get("classification", ""),
+                result.get("confidence", ""),
+                result.get("confidence_numeric", 0.0),
+            )
+            if issues and issues != ["decision-support disclaimer missing"]:
+                fallback = self.generate_report_template(
+                    evidence, result, variant_id, top_k_results=top_k_results
+                )
+                return (
+                    f"[LLM report failed verification ({'; '.join(issues)}); "
+                    "using template report]\n\n" + fallback
+                )
+            return self.ensure_disclaimer(report.strip())
         except (RuntimeError, ConnectionError, TimeoutError) as e:
             # Fallback to template for API/Network errors
             fallback = self.generate_report_template(
@@ -535,7 +592,7 @@ class ReportAgent:
             response_dict = json.loads(cleaned)
             
             return (
-                response_dict.get("report_text", ""),
+                self.ensure_disclaimer(response_dict.get("report_text", "")),
                 response_dict.get("evidence_summary", "")
             )
             

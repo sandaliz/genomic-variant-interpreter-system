@@ -4,10 +4,17 @@ Orchestrator for the Genomic Variant Interpretation multi-agent system.
 Pipeline:
 
   User query → [Authentication check] → Intake Agent (NLP + input sanitization)
+  → Supervisor Agent (plans retrieval mode + verification budget)
   → Evidence Retrieval Agent (Information Retrieval)
   → Classification Agent (LLM / rule-based reasoning)
+  → Verifier Agent (critiques the call; can send it back once)
   → Report Agent (LLM explanation + NLP summarization)
   → Final report
+
+The Supervisor and Verifier are the agentic control plane: the path through the
+pipeline is planned per query, and a classification whose confidence is not
+earned by the evidence is re-stated more conservatively before it is reported.
+See agents/orchestrator.py.
 
 Run:
     python main.py
@@ -32,6 +39,7 @@ from agents.intake_agent import IntakeAgent
 from agents.evidence_agent import EvidenceRetrievalAgent
 from agents.classification_agent import ClassificationAgent
 from agents.report_agent import ReportAgent
+from agents.orchestrator import SupervisorAgent, VerifierAgent
 
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -58,6 +66,10 @@ class VariantInterpretationSystem:
         self.evidence_agent = EvidenceRetrievalAgent(dataset_path, use_cache=use_cache, lazy_load=lazy_load)
         self.classification_agent = ClassificationAgent(use_llm=use_llm, fast_mode=fast_mode, smart_llm=smart_llm, enable_llm_cache=enable_llm_cache)
         self.report_agent = ReportAgent(use_llm=use_llm, fast_mode=fast_mode, batch_llm=batch_llm, enable_llm_cache=enable_llm_cache)
+        # Agentic control plane: the Supervisor plans each run and the Verifier
+        # checks the classification before it is reported (see agents/orchestrator.py).
+        self.supervisor = SupervisorAgent()
+        self.verifier = VerifierAgent()
         self.use_cache = use_cache
 
     def _generate_cache_key(self, raw_query: str, api_key: str, user_id: str = "") -> str:
@@ -120,6 +132,27 @@ class VariantInterpretationSystem:
 
         print(f"[1/4] {intake_msg}")
 
+        # --- Agent 0: Supervisor plans the run (agentic control, not a fixed chain) ---
+        # The plan is derived from the intake result: a bare HGVS/rsID/position
+        # query retrieves broadly and is verified leniently; a gene+variant query
+        # is targeted and strictly verified. The decision is recorded as a PLAN
+        # message so it appears in the audit trail.
+        plan = self.supervisor.plan(
+            intake_payload, self.log, intake_msg.trace_id, intake_msg.variant_id
+        )
+        pipeline_steps.append({
+            "agent": "supervisor_agent",
+            "stage": "plan_ready",
+            "status": "complete",
+            "output": {
+                "message_type": MessageType.PLAN,
+                "retrieval_mode": plan["retrieval_mode"],
+                "verification_budget": plan["verification_budget"],
+                "reason": plan["reason"],
+            },
+        })
+        print(f"[plan] {plan['retrieval_mode']} retrieval: {plan['reason']}")
+
         # --- Agent 2: Evidence Retrieval (IR) ---
         evidence_msg = self.evidence_agent.retrieve(intake_msg, self.log)
         evidence_payload = evidence_msg.decrypt_payload()
@@ -141,9 +174,32 @@ class VariantInterpretationSystem:
 
         print(f"[2/4] {evidence_msg}")
 
-        # --- Agent 3: Classification ---
+        # --- Agent 3: Classification, then the Verifier's check (bounded self-correction) ---
         class_msg = self.classification_agent.classify(evidence_msg, self.log)
         class_payload = class_msg.decrypt_payload()
+
+        verification = self.verifier.verify(
+            evidence_payload, class_payload, self.log, class_msg.trace_id,
+            class_msg.variant_id, retrieval_mode=plan["retrieval_mode"],
+        )
+        revision_rounds = 0
+
+        # The Supervisor applies the Verifier's directive at most once, then the
+        # Verifier re-checks. This is the loop that makes the pipeline agentic --
+        # the run can correct itself, but it can never cycle.
+        if verification["verdict"] == "revise" and plan["verification_budget"] > 0:
+            print(f"[verify] revising: {verification['issues']}")
+            class_msg = self.classification_agent.classify(
+                evidence_msg, self.log, directive=verification["directive"]
+            )
+            class_payload = class_msg.decrypt_payload()
+            verification = self.verifier.verify(
+                evidence_payload, class_payload, self.log, class_msg.trace_id,
+                class_msg.variant_id, retrieval_mode=plan["retrieval_mode"],
+                revised=True,
+            )
+            revision_rounds = 1
+
         pipeline_steps.append({
             "agent": "classification_agent",
             "stage": class_msg.stage,
@@ -162,10 +218,26 @@ class VariantInterpretationSystem:
                 "clinvar_context": class_payload.get("clinvar_context", []),
                 "population_observation": class_payload.get("population_observation"),
                 "responsible_ai": class_payload.get("responsible_ai", {}),
+                "confidence_revised": bool(class_payload.get("confidence_revised")),
             },
         })
 
         print(f"[3/4] {class_msg}")
+
+        verification_step = {
+            "agent": "verifier_agent",
+            "stage": "verification_complete",
+            "status": "complete",
+            "output": {
+                "message_type": MessageType.VERIFICATION_RESULT,
+                "verdict": verification["verdict"],
+                "directive": verification["directive"],
+                "issues": verification["issues"],
+                "checks": verification["checks"],
+                "revision_rounds": revision_rounds,
+            },
+        }
+        pipeline_steps.append(verification_step)
 
         # --- Agent 4: Report ---
         report_msg = self.report_agent.generate_report(evidence_msg, class_msg, self.log)
@@ -203,6 +275,10 @@ class VariantInterpretationSystem:
             "report_text": report_payload.get("report_text", ""),
             "evidence_summary": report_payload.get("evidence_summary", ""),
             "variant_id": display_variant_id,
+            # End-to-end id of this run. Returned so the API can persist it
+            # next to the caller's query_history row and later scope the
+            # trail/pipeline endpoints to the caller's own runs.
+            "trace_id": report_msg.trace_id,
             "classification": report_payload.get("classification", ""),
             "confidence": report_payload.get("confidence", "none"),
             "confidence_numeric": report_payload.get("confidence_numeric", 0.0),
@@ -218,8 +294,20 @@ class VariantInterpretationSystem:
             "population_observation": report_payload.get("population_observation"),
             "pipeline_steps": pipeline_steps,
             "audit_trail": audit_trail,
+            # Agentic control plane: what the Supervisor decided and what the
+            # Verifier concluded, so the reasoning is visible to the caller and
+            # not only in the logs.
+            "agentic": {
+                "plan": plan,
+                "verification": verification,
+                "revision_rounds": revision_rounds,
+            },
             "top_k_results": evidence_payload.get("top_k_results", []),
             "ir_metadata": evidence_payload.get("ir_metadata", {}),
+            # The inputs the confidence score was computed from. The report text
+            # has always carried this breakdown as prose; exposing the numbers
+            # lets a client draw the same picture instead of only quoting it.
+            "confidence_components": class_payload.get("confidence_components", {}),
             "responsible_ai": report_payload.get("responsible_ai", {}),
             "intent": intake_payload.get("intent"),
             "query_type": intake_payload.get("query_type"),

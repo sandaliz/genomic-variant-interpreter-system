@@ -185,6 +185,17 @@ def hash_password(password: str) -> str:
     return _password_hash.hash(password)
 
 
+# A valid Argon2id digest of a random password, used only as a timing shield:
+# the login route verifies the supplied password against this when no account
+# matches the email, so "no such account" costs the same Argon2id work as
+# "wrong password" and response time cannot reveal which addresses exist.
+_DUMMY_PASSWORD_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4"
+    "$c2VjdXJpdHktYXVkaXQtZHVtbXk"
+    "$h4lrV0lJdPbKkVxCwFX+h8lPDMgZ7T7Ci4srbFJ8R7k"
+)
+
+
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify a plaintext password against its stored hash (constant time)."""
     try:
@@ -192,6 +203,18 @@ def verify_password(password: str, password_hash: str) -> bool:
     except Exception:
         # A malformed or legacy hash must read as wrong password, never a 500.
         return False
+
+
+def verify_password_or_dummy(password: str, password_hash: str | None) -> bool:
+    """Verify, or burn equal Argon2id work when there is no stored hash.
+
+    The login route calls this with None for unknown emails so the two failure
+    modes are indistinguishable by timing as well as by message.
+    """
+    if password_hash is None:
+        _password_hash.verify(password, _DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(password, password_hash)
 
 
 def _encrypt(plaintext: str) -> str:
