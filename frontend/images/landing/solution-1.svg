@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A ranked evidence table: five ClinVar records with the relevance score each was returned for, ClinVar's own classification, its review-status stars, and one record marked as carrying conflicting interpretations">
   <!--
-    VarientLens landing imagery -- evidence you can check (solution card 01).
+    VarientLens landing imagery - evidence you can check (solution card 01).
 
     The card's promise is that any call can be followed back to the records that
     produced it. The thing that makes that checkable rather than merely plausible
-    is ClinVar's own review status travelling with each record -- stars, submitter
+    is ClinVar's own review status travelling with each record - stars, submitter
     count, and whether the submitters disagreed. So the table carries the product's
     relevance score *and* the source's own verdict, and the row where the two
     point different ways is the one picked out.

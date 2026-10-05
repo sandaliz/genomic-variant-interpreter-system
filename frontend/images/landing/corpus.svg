@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A dark field of variant-position ticks, denser in the middle band">
   <!--
-    VarientLens landing imagery -- the closing call to action.
+    VarientLens landing imagery - the closing call to action.
 
     It used to be a laboratory bench, which is a photograph of a building rather
     than of the thing being sold. This is the corpus itself: the product's
@@ -41,8 +41,8 @@
 
   <rect width="1920" height="1080" fill="url(#ctaBg)"/>
 
-  <!-- The three bands sit inside y 140..920 so that a 2.5:1 crop -- which is what
-       this band is at a wide viewport -- loses almost nothing. -->
+  <!-- The three bands sit inside y 140..920 so that a 2.5:1 crop, which is what
+       this band is at a wide viewport, loses almost nothing. -->
   <rect x="120" y="140" width="1680" height="180" fill="url(#ck1)"/>
   <rect x="120" y="140" width="1680" height="180" fill="url(#ck2)"/>
 

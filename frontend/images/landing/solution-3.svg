@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A query history chart for the last fourteen days above two panels: an authenticated API call carrying an X-API-Key header, and the history, audit-export and key-issue endpoints">
   <!--
-    VarientLens landing imagery -- a workflow that scales (solution 03).
+    VarientLens landing imagery - a workflow that scales (solution 03).
 
     The card lists three things a laboratory needs after the first interesting
     result: the account's own history, an export for review, and a door for the
-    systems it already runs. So the picture is those three and nothing else --
+    systems it already runs. So the picture is those three and nothing else -
     a fortnight of queries, the API call, and the endpoints.
 
     The endpoint paths, the GET/POST methods and the X-API-Key header are the

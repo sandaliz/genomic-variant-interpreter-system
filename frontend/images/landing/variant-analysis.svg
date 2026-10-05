@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Stage one: the plain-English query Classify BRCA2 c.5946delT becoming the structured variant gene BRCA2, HGVS c.5946delT, transcript NM_000059.4 and position chr13:32,340,300, marked as screened">
   <!--
-    VarientLens landing imagery -- variant analysis (platform card 01).
+    VarientLens landing imagery - variant analysis (platform card 01).
 
     The card's copy promises that a plain-English question becomes a structured
     variant and that the raw input is screened first, so the picture is exactly
@@ -10,7 +10,7 @@
 
     Card frames are 4/3, which this canvas already is, so nothing is cropped and
     the full square is usable. At the ~380px these render at, only the query, the
-    values and the pass badge are legible -- everything else is hierarchy.
+    values and the pass badge are legible - everything else is hierarchy.
   -->
   <defs>
     <style>

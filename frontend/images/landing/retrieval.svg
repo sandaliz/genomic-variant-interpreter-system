@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1080" width="1200" height="1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A comparison of the three retrieval rankers over five records: TF-IDF, BM25 and their reciprocal-rank fusion, showing that the same record is ranked differently by each">
   <!--
-    VarientLens landing imagery -- precision analysis (the split section).
+    VarientLens landing imagery - precision analysis (the split section).
 
     It sat behind a microscope, which is a picture of a laboratory rather than of
     this product. The section's argument is that the evidence agent ranks
@@ -10,7 +10,7 @@
     rankers exist at all.
 
     TF-IDF carries the highlight because RANKERS in evidence_agent.py makes it the
-    default -- the one every stored result was produced with. Highlighting the
+    default - the one every stored result was produced with. Highlighting the
     fusion would have been the more flattering picture and the wrong one.
 
     Light on purpose: it sits opposite the dark capability band, and a diagram of

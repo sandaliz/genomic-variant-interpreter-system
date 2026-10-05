@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="The VarientLens workspace: a plain-English query about a BRCA1 variant beside the Pathogenic call it produced, its confidence and the ACMG-style criteria applied">
   <!--
-    VarientLens landing imagery -- hero.
+    VarientLens landing imagery - hero.
 
     This is the product, not a metaphor for it. The window is the workspace view
     with the one query the marketing page uses as its example, and every value in
@@ -10,7 +10,7 @@
     decoration; this one answers "what does it do".
 
     Drawn rather than photographed, so it can never drift out of step with the
-    palette -- every colour here is a token from app.css. To swap in a real
+    palette - every colour here is a token from app.css. To swap in a real
     screenshot instead, drop the file into this directory and point
     landingImages.hero at it in app.js; the frame crops with object-fit:cover,
     so any aspect works.

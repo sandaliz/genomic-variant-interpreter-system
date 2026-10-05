@@ -10,6 +10,7 @@ The first test here is the one that would have caught that.
 """
 
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -219,6 +220,15 @@ class TestServedPage:
     def test_assets_are_served(self, served):
         assert len(served["css"]) > 1000
         assert len(served["js"]) > 1000
+
+    @pytest.mark.parametrize(
+        "image", sorted((FRONTEND / "images" / "landing").glob("*.svg"))
+    )
+    def test_landing_svg_images_are_served_as_valid_xml(self, client, image):
+        response = client.get(f"/static/images/landing/{image.name}")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/svg+xml")
+        ET.fromstring(response.content)
 
     def test_served_css_has_the_hidden_utility(self, served):
         assert re.search(r"\.hidden\{display:none\s*!important;\}", served["css"])
