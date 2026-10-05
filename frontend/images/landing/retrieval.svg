@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1080" width="1200" height="1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A comparison of the three retrieval rankers over five records: TF-IDF, BM25 and their reciprocal-rank fusion, showing that the same record is ranked differently by each">
+  <!--
+    VarientLens landing imagery -- precision analysis (the split section).
+
+    It sat behind a microscope, which is a picture of a laboratory rather than of
+    this product. The section's argument is that the evidence agent ranks
+    candidates and applies the criteria in code, so what it needs is the ranking
+    made visible: the same five records scored by all three rankers, with the
+    ranks disagreeing in the middle of the table, which is the reason three
+    rankers exist at all.
+
+    TF-IDF carries the highlight because RANKERS in evidence_agent.py makes it the
+    default -- the one every stored result was produced with. Highlighting the
+    fusion would have been the more flattering picture and the wrong one.
+
+    Light on purpose: it sits opposite the dark capability band, and a diagram of
+    white panels on white paper is the lighter half of that pair.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:24px;font-weight:700;letter-spacing:3px;fill:#8A909B}
+      .colhead{font-size:24px;font-weight:700;letter-spacing:1.6px;fill:#8A909B}
+      .rec{font-size:28px;fill:#20242A}
+      .rec-note{font-size:20px;fill:#8A909B}
+      .rank{font-size:30px;font-weight:700;fill:#626873}
+      .rank-top{font-size:30px;font-weight:700;fill:#142B4A}
+      .caption{font-size:24px;fill:#626873}
+    </style>
+    <linearGradient id="rtBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#F7F9FC"/>
+      <stop offset="1" stop-color="#EDF1F8"/>
+    </linearGradient>
+    <radialGradient id="rtGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="rtGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="1080" fill="url(#rtBg)"/>
+  <rect width="1200" height="1080" fill="url(#rtGrid)" opacity="0.55"/>
+  <ellipse cx="600" cy="200" rx="620" ry="320" fill="url(#rtGlow)"/>
+
+  <text class="s lbl" x="72" y="100">THREE RANKERS, ONE CORPUS</text>
+  <text class="s" x="72" y="150" font-size="24" fill="#626873">3,009 ClinVar records indexed once, ranked three ways</text>
+  <text class="s" x="1128" y="150" font-size="22" fill="#3F5F9A" text-anchor="end">TF-IDF · the ranker of record</text>
+
+  <!-- ===== Header. The active column is marked here rather than by colour alone,
+       so the table still reads in greyscale or to a colour-blind eye. ===== -->
+  <rect x="456" y="216" width="216" height="48" rx="10" fill="#E9EEF6" stroke="#3F5F9A" stroke-width="2"/>
+  <text class="s colhead" x="88" y="248">RECORD</text>
+  <text class="s colhead" x="564" y="248" fill="#142B4A" text-anchor="middle">TF-IDF</text>
+  <text class="s colhead" x="804" y="248" text-anchor="middle">BM25</text>
+  <text class="s colhead" x="1032" y="248" text-anchor="middle">RRF</text>
+
+  <rect x="456" y="288" width="216" height="116" fill="#F2F5FA"/>
+  <text class="m rec" x="88" y="336">c.5266dupC</text>
+  <text class="s rec-note" x="88" y="368">Exact variant match</text>
+  <text class="m rank-top" x="480" y="354">1</text>
+  <rect x="528" y="340" width="130" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="m rank-top" x="720" y="354">1</text>
+  <rect x="768" y="340" width="130" height="9" rx="4.5" fill="#AFC0DA"/>
+  <text class="m rank-top" x="960" y="354">1</text>
+  <rect x="1008" y="340" width="112" height="9" rx="4.5" fill="#AFC0DA"/>
+
+  <rect x="456" y="404" width="216" height="116" fill="#F2F5FA"/>
+  <text class="m rec" x="88" y="452">rs80357906</text>
+  <text class="s rec-note" x="88" y="484">Exact variant match</text>
+  <text class="m rank" x="480" y="470">2</text>
+  <rect x="528" y="456" width="118" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="m rank" x="720" y="470">3</text>
+  <rect x="768" y="456" width="104" height="9" rx="4.5" fill="#AFC0DA"/>
+  <text class="m rank" x="960" y="470">2</text>
+  <rect x="1008" y="456" width="104" height="9" rx="4.5" fill="#AFC0DA"/>
+
+  <rect x="456" y="520" width="216" height="116" fill="#F2F5FA"/>
+  <text class="m rec" x="88" y="568">chr17:41,244,442</text>
+  <text class="s rec-note" x="88" y="600">Same genomic position</text>
+  <text class="m rank" x="480" y="586">5</text>
+  <rect x="528" y="572" width="72" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="m rank" x="720" y="586">2</text>
+  <rect x="768" y="572" width="118" height="9" rx="4.5" fill="#AFC0DA"/>
+  <text class="m rank" x="960" y="586">3</text>
+  <rect x="1008" y="572" width="92" height="9" rx="4.5" fill="#AFC0DA"/>
+
+  <rect x="456" y="636" width="216" height="116" fill="#F2F5FA"/>
+  <text class="m rec" x="88" y="684">c.5123C&gt;A</text>
+  <text class="s rec-note" x="88" y="716">Same gene</text>
+  <text class="m rank" x="480" y="702">3</text>
+  <rect x="528" y="688" width="100" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="m rank" x="720" y="702">6</text>
+  <rect x="768" y="688" width="58" height="9" rx="4.5" fill="#AFC0DA"/>
+  <text class="m rank" x="960" y="702">4</text>
+  <rect x="1008" y="688" width="80" height="9" rx="4.5" fill="#AFC0DA"/>
+
+  <rect x="456" y="752" width="216" height="116" fill="#F2F5FA"/>
+  <text class="m rec" x="88" y="800">c.5946delT</text>
+  <text class="s rec-note" x="88" y="832">TF-IDF cosine similarity</text>
+  <text class="m rank" x="480" y="818">4</text>
+  <rect x="528" y="804" width="86" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="m rank" x="720" y="818">5</text>
+  <rect x="768" y="804" width="70" height="9" rx="4.5" fill="#AFC0DA"/>
+  <text class="m rank" x="960" y="818">5</text>
+  <rect x="1008" y="804" width="64" height="9" rx="4.5" fill="#AFC0DA"/>
+
+  <line x1="72" y1="288" x2="1128" y2="288" stroke="#E8E8E8" stroke-width="2"/>
+  <line x1="72" y1="404" x2="1128" y2="404" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="520" x2="1128" y2="520" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="636" x2="1128" y2="636" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="752" x2="1128" y2="752" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="868" x2="1128" y2="868" stroke="#E8E8E8" stroke-width="2"/>
+
+  <text class="s caption" x="72" y="950">The three are compared, not averaged: the fusion merges ranks, so a record</text>
+  <text class="s caption" x="72" y="984">one lexical model misses can still be surfaced by the other.</text>
+</svg>

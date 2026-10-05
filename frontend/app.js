@@ -11,23 +11,26 @@
    own aspect-ratio and the image is object-fit:cover inside it, so a source of
    any shape crops correctly instead of distorting.
 
-   The shipped placeholders are SVG -- resolution independent, a few KB each, and
-   drawn in the product palette so they read as part of the design rather than as
-   stock photography standing in for one. Rename any value to .jpg/.webp to swap
-   in the real thing.
+   The shipped artwork is SVG -- resolution independent, a few KB each, and drawn
+   from the product itself rather than from stock photography: the workspace with
+   a real query in it, the pipeline's own stages, the criteria its classification
+   code applies, and the corpus it indexes. Rename any value to .jpg/.webp to swap
+   in a photograph, but the drawings are the product, not stand-ins for one.
    ========================================================================== */
 const LANDING_IMAGE_BASE = '/static/images/landing/';
 
 const landingImages = {
-  // Hero: the large scientific visual beside the headline.
+  // Hero: the workspace, with the query the page itself suggests and the call it
+  // produced.
   hero:            LANDING_IMAGE_BASE + 'hero.svg',
-  // The three platform cards.
+  // The three platform cards, in pipeline order.
   variantAnalysis: LANDING_IMAGE_BASE + 'variant-analysis.svg',
   genetics:        LANDING_IMAGE_BASE + 'genetics.svg',
   clinical:        LANDING_IMAGE_BASE + 'clinical-interpretation.svg',
-  // The precision-analysis split section.
-  microscope:      LANDING_IMAGE_BASE + 'microscope.svg',
-  laboratory:      LANDING_IMAGE_BASE + 'laboratory.svg',
+  // The precision-analysis split section: the three rankers over one corpus.
+  retrieval:       LANDING_IMAGE_BASE + 'retrieval.svg',
+  // The closing call to action's background field: the indexed corpus.
+  corpus:          LANDING_IMAGE_BASE + 'corpus.svg',
   // The three insight panels.
   solutionOne:     LANDING_IMAGE_BASE + 'solution-1.svg',
   solutionTwo:     LANDING_IMAGE_BASE + 'solution-2.svg',

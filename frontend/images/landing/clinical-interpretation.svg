@@ -1,97 +1,100 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A variant interpretation report showing a verdict, a confidence gauge and the criteria applied">
-  <!-- VarientLens landing imagery -- clinical interpretation. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="An exported VarientLens report page: an Uncertain Significance call with moderate confidence, four ACMG-style criteria listed with the evidence direction for each, and a named reviewer's sign-off and signature">
+  <!--
+    VarientLens landing imagery -- clinical interpretation (platform card 03).
+
+    The card's copy promises the classification, the criteria and the confidence
+    reported together and held against a named reviewer's sign-off, so this is the
+    report page itself rather than the console that produced it. It deliberately
+    shows a VUS: the product's whole claim is that it reports the disagreement
+    between ClinVar submitters instead of averaging it away, and a confident
+    "Pathogenic" here would illustrate the opposite of that claim.
+
+    The criteria carry their direction, because a code list where every entry
+    leans the same way is not a decision anyone had to make. BA1 is shown as
+    evaluated and not met, which is the case the engine's own comments in
+    classification_agent.py spend the most words on.
+  -->
   <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:20px;font-weight:700;letter-spacing:2.4px;fill:#8A909B}
+      .row-k{font-size:26px;font-weight:700;fill:#20242A}
+      .row-v{font-size:24px;fill:#20242A}
+      .row-note{font-size:20px;fill:#8A909B}
+    </style>
     <linearGradient id="ciBg" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#0D2039"/>
-      <stop offset="0.55" stop-color="#142B4A"/>
-      <stop offset="1" stop-color="#0B1C34"/>
+      <stop offset="0" stop-color="#F2F5FA"/>
+      <stop offset="1" stop-color="#E6EBF3"/>
     </linearGradient>
-    <radialGradient id="ciGlow" cx="0.5" cy="0.42" r="0.6">
-      <stop offset="0" stop-color="#4E7BC4" stop-opacity="0.34"/>
-      <stop offset="1" stop-color="#4E7BC4" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="ciCard" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#EEF2F8"/>
-    </linearGradient>
-    <filter id="ciShadow" x="-25%" y="-25%" width="150%" height="150%">
-      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#040C1A" flood-opacity="0.6"/>
+    <filter id="ciPage" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#142B4A" flood-opacity="0.22"/>
     </filter>
-    <pattern id="ciGrid" width="60" height="60" patternUnits="userSpaceOnUse">
-      <path d="M60,0 H0 V60" fill="none" stroke="#8FB0E0" stroke-width="1"/>
-    </pattern>
   </defs>
 
   <rect width="1200" height="900" fill="url(#ciBg)"/>
-  <rect width="1200" height="900" fill="url(#ciGrid)" opacity="0.055"/>
-  <ellipse cx="600" cy="410" rx="580" ry="440" fill="url(#ciGlow)"/>
+  <pattern id="ciGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+    <path d="M60,0 H0 V60" fill="none" stroke="#D5DCE8" stroke-width="1"/>
+  </pattern>
+  <rect width="1200" height="900" fill="url(#ciGrid)" opacity="0.5"/>
 
-  <g filter="url(#ciShadow)">
-    <rect x="170" y="112" width="860" height="660" rx="10" fill="url(#ciCard)"/>
-  </g>
+  <!-- The report, drawn as a sheet so it reads as the artefact a clinician signs
+       rather than as another screen. -->
+  <rect x="96" y="56" width="1008" height="788" rx="10" fill="#FFFFFF" filter="url(#ciPage)"/>
+  <path d="M96,66 a10,10 0 0 1 10,-10 h988 a10,10 0 0 1 10,10 v86 H96 z" fill="#142B4A"/>
+  <rect x="96" y="130" width="1008" height="22" fill="#142B4A"/>
+  <text class="s" x="136" y="118" font-size="22" font-weight="700" letter-spacing="2.4" fill="#FFFFFF">VARIANT INTERPRETATION REPORT</text>
+  <text class="m" x="1064" y="118" font-size="20" fill="#A9BBD6" text-anchor="end">trace 8f3c1d</text>
 
-  <g>
-    <!-- Header: a label rule and a document title. -->
-    <rect x="202" y="146" width="128" height="10" rx="5" fill="#B9C2D0"/>
-    <path d="M202,182 H998" stroke="#D6DAE0" stroke-width="1"/>
+  <!-- ===== The call ===== -->
+  <text class="s lbl" x="136" y="216">CLASSIFICATION</text>
+  <text class="s" x="136" y="278" font-size="46" font-weight="600" fill="#8C6210">Uncertain Significance</text>
 
-    <!-- Verdict panel. The left bar is the clinical signal colour, exactly as the
-         real report carries it. -->
-    <rect x="202" y="210" width="796" height="154" rx="8" fill="#FFFFFF" stroke="#E1E6EE"/>
-    <rect x="202" y="210" width="7" height="154" rx="3" fill="#A33A2E"/>
-    <rect x="230" y="234" width="96" height="9" rx="4" fill="#C6CEDA"/>
-    <rect x="230" y="256" width="212" height="24" rx="4" fill="#1B3A61"/>
-    <rect x="230" y="304" width="430" height="9" rx="4" fill="#E4E9F0"/>
-    <rect x="230" y="304" width="308" height="9" rx="4" fill="#3F5F9A"/>
-    <rect x="230" y="330" width="180" height="7" rx="3" fill="#DCE2EB"/>
+  <text class="s lbl" x="700" y="216">CONFIDENCE</text>
+  <rect x="700" y="234" width="364" height="12" rx="6" fill="#F0E4C8"/>
+  <rect x="700" y="234" width="146" height="12" rx="6" fill="#8C6210"/>
+  <!-- The same 35 / 60 thresholds the engine uses, so the reader can see which
+       band the number landed in instead of trusting the word. -->
+  <line x1="827" y1="228" x2="827" y2="252" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.7"/>
+  <line x1="918" y1="228" x2="918" y2="252" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.7"/>
+  <text class="m" x="1064" y="282" font-size="26" fill="#8C6210" text-anchor="end">moderate · 40</text>
 
-    <!-- Confidence gauge: an arc, turned so it starts at twelve o'clock. -->
-    <g transform="rotate(-90 924 288)">
-      <circle cx="924" cy="288" r="52" fill="none" stroke="#E4E9F0" stroke-width="11"/>
-      <circle cx="924" cy="288" r="52" fill="none" stroke="#3F5F9A" stroke-width="11"
-              stroke-linecap="round" stroke-dasharray="235 327"/>
-    </g>
+  <line x1="136" y1="312" x2="1064" y2="312" stroke="#E8E8E8" stroke-width="2"/>
 
-    <!-- Criteria applied: chips of uneven width, one of them flagged. -->
-    <rect x="202" y="396" width="150" height="30" rx="15" fill="#E9EEF6"/>
-    <rect x="364" y="396" width="124" height="30" rx="15" fill="#E9EEF6"/>
-    <rect x="500" y="396" width="168" height="30" rx="15" fill="#E9EEF6"/>
-    <rect x="680" y="396" width="112" height="30" rx="15" fill="#FBF1DE"/>
+  <!-- ===== Criteria, each with the direction its evidence points ===== -->
+  <text class="s lbl" x="136" y="368">CRITERIA APPLIED IN CODE</text>
 
-    <!-- Ranked evidence, top five. -->
-    <path d="M202,454 H998" stroke="#D6DAE0" stroke-width="1"/>
-    <g>
-      <circle cx="216" cy="487" r="8" fill="#E9EEF6"/>
-      <rect x="240" y="482" width="150" height="10" rx="5" fill="#9FAABA"/>
-      <rect x="410" y="482" width="212" height="10" rx="5" fill="#DCE2EB"/>
-      <rect x="920" y="482" width="78" height="10" rx="5" fill="#3F5F9A"/>
-    </g>
-    <g>
-      <circle cx="216" cy="535" r="8" fill="#E9EEF6"/>
-      <rect x="240" y="530" width="132" height="10" rx="5" fill="#9FAABA"/>
-      <rect x="410" y="530" width="182" height="10" rx="5" fill="#DCE2EB"/>
-      <rect x="938" y="530" width="60" height="10" rx="5" fill="#3F5F9A" opacity="0.85"/>
-    </g>
-    <g>
-      <circle cx="216" cy="583" r="8" fill="#E9EEF6"/>
-      <rect x="240" y="578" width="168" height="10" rx="5" fill="#9FAABA"/>
-      <rect x="410" y="578" width="146" height="10" rx="5" fill="#DCE2EB"/>
-      <rect x="952" y="578" width="46" height="10" rx="5" fill="#3F5F9A" opacity="0.7"/>
-    </g>
-    <g>
-      <circle cx="216" cy="631" r="8" fill="#E9EEF6"/>
-      <rect x="240" y="626" width="120" height="10" rx="5" fill="#9FAABA"/>
-      <rect x="410" y="626" width="196" height="10" rx="5" fill="#DCE2EB"/>
-      <rect x="962" y="626" width="36" height="10" rx="5" fill="#3F5F9A" opacity="0.55"/>
-    </g>
-    <path d="M202,668 H998" stroke="#E4E9F0" stroke-width="1"/>
+  <rect x="136" y="396" width="6" height="44" rx="3" fill="#A33A2E"/>
+  <text class="m row-k" x="166" y="432">PM2</text>
+  <text class="s row-v" x="300" y="432">Absent from population databases</text>
+  <text class="s row-note" x="1064" y="432" text-anchor="end">moderate · pathogenic</text>
 
-    <!-- Sign-off: a ruled line waiting for a named reviewer. -->
-    <path d="M202,722 H520" stroke="#C6CEDA" stroke-width="1" stroke-dasharray="5 4"/>
-    <rect x="202" y="700" width="86" height="8" rx="4" fill="#DCE2EB"/>
-    <path d="M566,722 H760" stroke="#C6CEDA" stroke-width="1" stroke-dasharray="5 4"/>
-    <rect x="566" y="700" width="62" height="8" rx="4" fill="#DCE2EB"/>
-    <rect x="812" y="694" width="186" height="34" rx="4" fill="#FBF1DE"/>
-    <rect x="836" y="706" width="138" height="10" rx="5" fill="#D9A441"/>
-  </g>
+  <rect x="136" y="452" width="6" height="44" rx="3" fill="#A33A2E"/>
+  <text class="m row-k" x="166" y="488">PP3</text>
+  <text class="s row-v" x="300" y="488">Computational predictors agree</text>
+  <text class="s row-note" x="1064" y="488" text-anchor="end">supporting · pathogenic</text>
+
+  <rect x="136" y="508" width="6" height="44" rx="3" fill="#A33A2E"/>
+  <text class="m row-k" x="166" y="544">PP1</text>
+  <text class="s row-v" x="300" y="544">Co-segregation with disease</text>
+  <text class="s row-note" x="1064" y="544" text-anchor="end">supporting · pathogenic</text>
+
+  <rect x="136" y="564" width="6" height="44" rx="3" fill="#D6DAE0"/>
+  <text class="m row-k" x="166" y="600" fill="#8A909B">BA1</text>
+  <text class="s row-v" x="300" y="600" fill="#8A909B">Allele frequency above threshold</text>
+  <text class="s row-note" x="1064" y="600" text-anchor="end">evaluated · not met</text>
+
+  <text class="s" x="136" y="648" font-size="21" fill="#8A909B">Submitters disagree here, so the call stays uncertain rather than resolving into a label.</text>
+
+  <line x1="136" y1="684" x2="1064" y2="684" stroke="#E8E8E8" stroke-width="2"/>
+
+  <!-- ===== Sign-off ===== -->
+  <text class="s lbl" x="136" y="732">REVIEWER SIGN-OFF</text>
+  <text class="s" x="136" y="776" font-size="26" font-weight="600" fill="#20242A">A. Menon</text>
+  <text class="s" x="136" y="804" font-size="21" fill="#8A909B">Reviewed 14 Sep 2026 · recorded against the account that ran it</text>
+
+  <path d="M760,772 c12,-34 24,-42 32,-16 c8,26 18,28 28,4 c10,-24 22,-30 34,-14 c10,14 22,18 34,4"
+        fill="none" stroke="#142B4A" stroke-width="2.6" stroke-linecap="round"/>
+  <line x1="748" y1="788" x2="1064" y2="788" stroke="#B9C8E0" stroke-width="2"/>
+  <text class="s" x="1064" y="816" font-size="20" fill="#8A909B" text-anchor="end">signature</text>
 </svg>

@@ -1,100 +1,149 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A DNA double helix on a deep navy field">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="The VarientLens workspace: a plain-English query about a BRCA1 variant beside the Pathogenic call it produced, its confidence and the ACMG-style criteria applied">
   <!--
     VarientLens landing imagery -- hero.
-    Placeholder artwork, drawn in the product palette. Replace by dropping a
-    photograph into frontend/images/landing/ and pointing landingImages.hero at
-    it in app.js; the frame crops with object-fit:cover, so any aspect works.
+
+    This is the product, not a metaphor for it. The window is the workspace view
+    with the one query the marketing page uses as its example, and every value in
+    it is a real one: the gene and position come from the dataset, the criteria
+    are codes classification_agent.py applies, and the confidence scale is the
+    35 / 60 bar the engine uses. A hero showing an anonymous dashboard would be
+    decoration; this one answers "what does it do".
+
+    Drawn rather than photographed, so it can never drift out of step with the
+    palette -- every colour here is a token from app.css. To swap in a real
+    screenshot instead, drop the file into this directory and point
+    landingImages.hero at it in app.js; the frame crops with object-fit:cover,
+    so any aspect works.
+
+    Layout note: the frame is 4/3.4 on desktop but 16/10 at the 1000px
+    breakpoint. The composition therefore lives inside x 212..1388 and survives
+    both, and type is sized for the ~600px it actually renders at.
   -->
   <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:19px;font-weight:700;letter-spacing:2.6px;fill:#8A909B}
+      .cap{font-size:16px;font-weight:700;letter-spacing:1.8px;fill:#8A909B}
+    </style>
+
     <linearGradient id="heroBg" x1="0" y1="0" x2="0.35" y2="1">
       <stop offset="0" stop-color="#0B1C34"/>
       <stop offset="0.55" stop-color="#142B4A"/>
       <stop offset="1" stop-color="#102541"/>
     </linearGradient>
-
-    <radialGradient id="heroGlow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#5C8AD4" stop-opacity="0.46"/>
-      <stop offset="0.55" stop-color="#3F5F9A" stop-opacity="0.14"/>
+    <radialGradient id="heroGlow" cx="0.5" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#5C8AD4" stop-opacity="0.34"/>
+      <stop offset="0.55" stop-color="#3F5F9A" stop-opacity="0.10"/>
       <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
     </radialGradient>
-
-    <linearGradient id="heroStrand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
-      <stop offset="0.22" stop-color="#CFE0F7"/>
-      <stop offset="0.72" stop-color="#8FB0E0"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/>
-    </linearGradient>
-
-    <linearGradient id="heroRung" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#7FA2D8"/>
-      <stop offset="0.5" stop-color="#E2ECFA"/>
-      <stop offset="1" stop-color="#7FA2D8"/>
-    </linearGradient>
-
-    <radialGradient id="heroVignette" cx="0.5" cy="0.5" r="0.74">
-      <stop offset="0.42" stop-color="#000000" stop-opacity="0"/>
-      <stop offset="1" stop-color="#061223" stop-opacity="0.62"/>
-    </radialGradient>
-
     <pattern id="heroGrid" width="100" height="100" patternUnits="userSpaceOnUse">
       <path d="M100,0 H0 V100" fill="none" stroke="#8FB0E0" stroke-width="1"/>
     </pattern>
-
-    <!-- Base pairs drawn behind the strands: the short ones sit near a crossing
-         and read as passing behind. One half-wave unit, reused four times. -->
-    <g id="heroRungsBack" stroke="url(#heroRung)" stroke-width="2" stroke-linecap="round" opacity="0.3">
-      <line x1="-37" y1="13.75" x2="37" y2="13.75"/>
-      <line x1="-106" y1="41.25" x2="106" y2="41.25"/>
-      <line x1="-106" y1="178.75" x2="106" y2="178.75"/>
-      <line x1="-37" y1="206.25" x2="37" y2="206.25"/>
-    </g>
-    <g id="heroRungsFront" stroke="url(#heroRung)" stroke-width="3" stroke-linecap="round" opacity="0.88">
-      <line x1="-158" y1="68.75" x2="158" y2="68.75"/>
-      <line x1="-186" y1="96.25" x2="186" y2="96.25"/>
-      <line x1="-186" y1="123.75" x2="186" y2="123.75"/>
-      <line x1="-158" y1="151.25" x2="158" y2="151.25"/>
-    </g>
+    <radialGradient id="heroVignette" cx="0.5" cy="0.5" r="0.74">
+      <stop offset="0.44" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#061223" stop-opacity="0.58"/>
+    </radialGradient>
+    <!-- A flat drop-shadow bands against the gradient, so the window casts a
+         real blur carrying the field's own colour. -->
+    <filter id="heroShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="30" stdDeviation="34" flood-color="#040D1C" flood-opacity="0.62"/>
+    </filter>
   </defs>
 
   <rect width="1600" height="1000" fill="url(#heroBg)"/>
-  <rect width="1600" height="1000" fill="url(#heroGrid)" opacity="0.07"/>
-  <ellipse cx="800" cy="500" rx="600" ry="500" fill="url(#heroGlow)"/>
+  <rect width="1600" height="1000" fill="url(#heroGrid)" opacity="0.06"/>
+  <ellipse cx="800" cy="470" rx="720" ry="520" fill="url(#heroGlow)"/>
 
-  <!-- Sequence tracks: horizontal rules with tick marks, at three depths. -->
-  <g stroke="#8FB0E0" fill="none">
-    <path d="M0,168 H1600" stroke-width="1" opacity="0.1"/>
-    <path d="M0,392 H1600" stroke-width="1" opacity="0.14"/>
-    <path d="M0,616 H1600" stroke-width="1" opacity="0.14"/>
-    <path d="M0,840 H1600" stroke-width="1" opacity="0.1"/>
-  </g>
-  <g stroke="#8FB0E0" stroke-width="1" opacity="0.2">
-    <path d="M120,160 V176 M280,160 V176 M440,160 V176 M600,160 V176 M760,160 V176 M920,160 V176 M1080,160 V176 M1240,160 V176 M1400,160 V176"/>
-    <path d="M120,608 V624 M280,608 V624 M440,608 V624 M600,608 V624 M760,608 V624 M920,608 V624 M1080,608 V624 M1240,608 V624 M1400,608 V624"/>
-  </g>
+  <!-- ===== The workspace window ===== -->
+  <rect x="240" y="120" width="1120" height="760" rx="18" fill="#FBFCFD" filter="url(#heroShadow)"/>
+  <rect x="240.5" y="120.5" width="1119" height="759" rx="18" fill="none"
+        stroke="#FFFFFF" stroke-opacity="0.12"/>
 
-  <!-- The helix. Two mirrored backbones over four half-waves. -->
-  <g transform="translate(800,44)">
-    <use href="#heroRungsBack"/>
-    <use href="#heroRungsBack" y="220"/>
-    <use href="#heroRungsBack" y="440"/>
-    <use href="#heroRungsBack" y="660"/>
-    <use href="#heroRungsFront"/>
-    <use href="#heroRungsFront" y="220"/>
-    <use href="#heroRungsFront" y="440"/>
-    <use href="#heroRungsFront" y="660"/>
+  <!-- Title bar. Two rects rather than a clip path: the second squares off the
+       bottom corners the rounded title bar would otherwise leave behind. -->
+  <rect x="240" y="120" width="1120" height="76" rx="18" fill="#102541"/>
+  <rect x="240" y="170" width="1120" height="26" fill="#102541"/>
+  <rect x="272" y="142" width="32" height="32" rx="9" fill="#3F5F9A"/>
+  <text class="s" x="288" y="165" font-size="20" font-weight="700" fill="#FFFFFF"
+        text-anchor="middle">V</text>
+  <text class="s" x="316" y="166" font-size="26" font-weight="600" fill="#FFFFFF"
+        letter-spacing="0.2">VarientLens</text>
+  <rect x="1080" y="142" width="150" height="32" rx="16" fill="#1B3A61"/>
+  <text class="s" x="1155" y="164" font-size="19" fill="#FFFFFF" text-anchor="middle">Workspace</text>
+  <text class="s" x="1258" y="165" font-size="19" fill="#A9BBD6" text-anchor="end">History</text>
+  <circle cx="1320" cy="158" r="17" fill="#3F5F9A"/>
+  <text class="s" x="1320" y="165" font-size="18" font-weight="700" fill="#FFFFFF"
+        text-anchor="middle">N</text>
 
-    <path d="M0,0 c253.3,80.1 253.3,139.9 0,220
-             c-253.3,80.1 -253.3,139.9 0,220
-             c253.3,80.1 253.3,139.9 0,220
-             c-253.3,80.1 -253.3,139.9 0,220"
-          fill="none" stroke="url(#heroStrand)" stroke-width="10" stroke-linecap="round"/>
-    <path d="M0,0 c-253.3,80.1 -253.3,139.9 0,220
-             c253.3,80.1 253.3,139.9 0,220
-             c-253.3,80.1 -253.3,139.9 0,220
-             c253.3,80.1 253.3,139.9 0,220"
-          fill="none" stroke="url(#heroStrand)" stroke-width="10" stroke-linecap="round"
-          opacity="0.66"/>
-  </g>
+  <!-- One hairline between the ask and the answer, the split the real workspace
+       uses: the query rail on the left, the report on the right. -->
+  <line x1="772" y1="224" x2="772" y2="800" stroke="#E8E8E8" stroke-width="1.5"/>
+
+  <!-- ===== Left: the question ===== -->
+  <text class="s lbl" x="280" y="252">QUERY</text>
+  <rect x="280" y="272" width="470" height="176" rx="12" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="1.5"/>
+  <text class="s" x="308" y="330" font-size="30" font-weight="500" fill="#20242A">Is BRCA1 NC_000017.10:</text>
+  <text class="s" x="308" y="372" font-size="30" font-weight="500" fill="#20242A">g.41244442A&gt;G pathogenic?</text>
+  <!-- Caret parked after the last word, so the box reads as something typed. -->
+  <rect x="696" y="350" width="3" height="32" fill="#3F5F9A"/>
+  <rect x="654" y="398" width="76" height="34" rx="17" fill="#3F5F9A"/>
+  <text class="s" x="692" y="421" font-size="17" font-weight="600" fill="#FFFFFF"
+        text-anchor="middle">Analyse</text>
+
+  <text class="s lbl" x="280" y="512">PARSED VARIANT</text>
+  <text class="s cap" x="280" y="556">GENE</text>
+  <text class="s" x="280" y="592" font-size="28" font-weight="600" fill="#20242A">BRCA1</text>
+  <text class="s cap" x="546" y="556">RSID</text>
+  <text class="m" x="546" y="592" font-size="24" fill="#20242A">rs80357906</text>
+  <text class="s cap" x="280" y="656">POSITION</text>
+  <text class="m" x="280" y="692" font-size="24" fill="#20242A">chr17:41,244,442</text>
+
+  <!-- Intake screens the raw string before any agent runs, so the pass is part of
+       the picture rather than a footnote about it. -->
+  <rect x="280" y="724" width="300" height="48" rx="24" fill="#EAF2ED" stroke="#CDE0D4" stroke-width="1.5"/>
+  <circle cx="312" cy="748" r="11" fill="#2F6B4F"/>
+  <path d="M306.5,748.5 l4,4.5 l7,-9" fill="none" stroke="#FFFFFF" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <text class="s" x="334" y="756" font-size="21" font-weight="500" fill="#2F6B4F">Input screened</text>
+
+  <!-- ===== Right: the answer ===== -->
+  <text class="s lbl" x="800" y="252">CLASSIFICATION</text>
+  <rect x="1180" y="232" width="140" height="30" rx="15" fill="#FBEDEA" stroke="#EFD3CD" stroke-width="1.5"/>
+  <text class="s" x="1250" y="252" font-size="16" font-weight="500" fill="#A33A2E"
+        text-anchor="middle">ACMG-style</text>
+  <text class="s" x="800" y="352" font-size="92" font-weight="600" fill="#A33A2E"
+        letter-spacing="-1.5">Pathogenic</text>
+
+  <text class="s cap" x="800" y="414">CONFIDENCE</text>
+  <rect x="800" y="430" width="420" height="14" rx="7" fill="#E6D2CE"/>
+  <rect x="800" y="430" width="328" height="14" rx="7" fill="#A33A2E"/>
+  <!-- The engine's own thresholds: 35 is moderate, 60 is high. They are drawn on
+       the bar because the number alone does not say what it cleared. -->
+  <line x1="947" y1="424" x2="947" y2="450" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.6"/>
+  <line x1="1052" y1="424" x2="1052" y2="450" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.6"/>
+  <text class="m" x="1240" y="444" font-size="24" fill="#A33A2E" text-anchor="end">78</text>
+  <text class="s" x="800" y="478" font-size="16" fill="#8A909B">high confidence · thresholds 35 / 60</text>
+
+  <text class="s cap" x="800" y="530">CRITERIA APPLIED</text>
+  <rect x="800" y="546" width="130" height="52" rx="10" fill="#FBEDEA" stroke="#E3BDB6" stroke-width="1.5"/>
+  <text class="m" x="865" y="580" font-size="24" font-weight="700" fill="#A33A2E" text-anchor="middle">PVS1</text>
+  <rect x="946" y="546" width="130" height="52" rx="10" fill="#FBF1DE" stroke="#EAD9B4" stroke-width="1.5"/>
+  <text class="m" x="1011" y="580" font-size="24" font-weight="700" fill="#8C6210" text-anchor="middle">PM2</text>
+  <rect x="1092" y="546" width="130" height="52" rx="10" fill="#FBF1DE" stroke="#EAD9B4" stroke-width="1.5"/>
+  <text class="m" x="1157" y="580" font-size="24" font-weight="700" fill="#8C6210" text-anchor="middle">PP3</text>
+  <text class="s" x="800" y="626" font-size="15" fill="#8A909B">PVS1 very strong · PM2 moderate · PP3 supporting</text>
+
+  <!-- The verifier is the stage a screenshot of any other tool would not have,
+       and it is what the product is built around, so it gets its own block. -->
+  <rect x="800" y="652" width="520" height="106" rx="12" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="1.5"/>
+  <rect x="800" y="652" width="5" height="106" rx="2.5" fill="#3F5F9A"/>
+  <text class="s cap" x="828" y="686">VERIFIER</text>
+  <text class="s" x="828" y="718" font-size="22" font-weight="600" fill="#20242A">Confidence claim upheld</text>
+  <text class="s" x="828" y="744" font-size="16" fill="#8A909B">one round only · a revision can only lower the call</text>
+
+  <line x1="280" y1="800" x2="1320" y2="800" stroke="#E8E8E8" stroke-width="1.5"/>
+  <text class="m" x="280" y="838" font-size="16" fill="#8A909B">trace 8f3c1d · 3,009 ClinVar records indexed · top 5 · RRF fusion</text>
 
   <rect width="1600" height="1000" fill="url(#heroVignette)"/>
 </svg>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A dark field of variant-position ticks, denser in the middle band">
+  <!--
+    VarientLens landing imagery -- the closing call to action.
+
+    It used to be a laboratory bench, which is a photograph of a building rather
+    than of the thing being sold. This is the corpus itself: the product's
+    indexed variant positions drawn as a genome-browser style field of ticks.
+
+    Composed for its job rather than to be looked at. The element is painted at
+    22% opacity behind centred white type and cropped with object-fit:cover to a
+    band that is far wider than it is tall, so two things follow:
+
+      * nothing here is labelled. A caption at a fixed y would be sliced in half
+        by the crop at some widths and look like a mistake; texture cannot be
+        cropped wrongly.
+      * the middle band is drawn at lower opacity, because that is where the
+        headline sits and a tick field is not worth reading type through.
+
+    The ticks are also deliberately brighter than a tasteful dark illustration
+    would be. 22% of a tasteful value is nothing.
+  -->
+  <defs>
+    <linearGradient id="ctaBg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0B1C34"/>
+      <stop offset="0.55" stop-color="#142B4A"/>
+      <stop offset="1" stop-color="#102541"/>
+    </linearGradient>
+    <radialGradient id="ctaVignette" cx="0.5" cy="0.5" r="0.72">
+      <stop offset="0.28" stop-color="#000000" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#061223" stop-opacity="0.9"/>
+    </radialGradient>
+    <!-- Two tick periods overlaid on the same rect. One pattern alone reads as
+         machine-stamped; two at different heights and phases read as records. -->
+    <pattern id="ck1" width="14" height="46" patternUnits="userSpaceOnUse">
+      <path d="M6,2 V24" stroke="#8FB0E0" stroke-width="2" opacity="0.5"/>
+    </pattern>
+    <pattern id="ck2" width="22" height="38" patternUnits="userSpaceOnUse">
+      <path d="M4,0 V31" stroke="#8FB0E0" stroke-width="2" opacity="0.34"/>
+    </pattern>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#ctaBg)"/>
+
+  <!-- The three bands sit inside y 140..920 so that a 2.5:1 crop -- which is what
+       this band is at a wide viewport -- loses almost nothing. -->
+  <rect x="120" y="140" width="1680" height="180" fill="url(#ck1)"/>
+  <rect x="120" y="140" width="1680" height="180" fill="url(#ck2)"/>
+
+  <g opacity="0.55">
+    <rect x="120" y="400" width="1680" height="260" fill="url(#ck1)"/>
+    <rect x="120" y="400" width="1680" height="260" fill="url(#ck2)"/>
+  </g>
+
+  <rect x="120" y="740" width="1680" height="180" fill="url(#ck1)"/>
+  <rect x="120" y="740" width="1680" height="180" fill="url(#ck2)"/>
+
+  <!-- A few positions picked out brighter: the records a query actually returns.
+       Enough of them to suggest a result without becoming a diagram. -->
+  <g stroke="#CFE0F7" stroke-width="3" opacity="0.8">
+    <path d="M246,140 V320 M512,140 V320 M874,140 V320 M1188,140 V320 M1520,140 V320 M1794,140 V320"/>
+    <path d="M188,400 V660 M402,400 V660 M690,400 V660 M1024,400 V660 M1362,400 V660 M1708,400 V660"/>
+    <path d="M302,740 V920 M742,740 V920 M1128,740 V920 M1584,740 V920 M1856,740 V920"/>
+  </g>
+
+  <rect width="1920" height="1080" fill="url(#ctaVignette)"/>
+</svg>

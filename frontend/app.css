@@ -708,7 +708,7 @@
    tonal step plus the hairline keeps them separate. */
 .cta-band{background:var(--navy);color:#fff;position:relative;overflow:hidden;
   border-bottom:1px solid rgba(233,238,246,.14);}
-/* A laboratory frame held far back -- texture behind the type, never a picture
+/* The indexed corpus held far back -- texture behind the type, never a picture
    the reader has to look past. */
 .cta-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
   opacity:0.22;pointer-events:none;}
