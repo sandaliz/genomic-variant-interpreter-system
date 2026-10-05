@@ -649,7 +649,10 @@ class EvidenceRetrievalAgent:
         rsid = intake_payload.get("rsid")
         raw_query = intake_payload.get("raw_query", "")
 
-        evidence = {"found": False, "query_type": query_type}
+        # Declared up front so `coverage_fallback` is ALWAYS a boolean in the payload.
+        # Otherwise it is only set on the record-found path, so a consumer reading
+        # it with .get() would receive None instead of False on not-found results.
+        evidence = {"found": False, "query_type": query_type, "coverage_fallback": False}
 
         # --- CANDIDATE RETRIEVAL ---
         candidates = pd.DataFrame()
