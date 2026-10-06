@@ -121,6 +121,22 @@ class TestScriptReferences:
         for view in VIEWS:
             assert f'view{view.capitalize()}' in HTML
 
+    def test_registration_auto_login_uses_email_identity(self):
+        """The login API requires email, including after registration."""
+        register_start = JS.index("async function doRegister")
+        register_end = JS.index("async function doForgotPassword")
+        registration = JS[register_start:register_end]
+        auto_login = registration[registration.index("// Register returns"):]
+        assert "email: document.getElementById('regEmail').value.trim()" in auto_login
+        assert "username: document.getElementById('regUsername').value.trim()" not in auto_login
+
+    def test_registration_closes_auth_modal_after_session_refresh(self):
+        register_start = JS.index("async function doRegister")
+        register_end = JS.index("async function doForgotPassword")
+        registration = JS[register_start:register_end]
+        assert "await refreshSession();\n    // Dismiss the modal" in registration
+        assert "closeAuth();" in registration
+
 
 class TestNoStaleUi:
     """The rail-level account UI was replaced; none of it should come back."""
@@ -834,7 +850,7 @@ class TestFrontendDeepLinks:
     def test_view_slugs_serve_the_app(self, client, slug):
         response = client.get(slug)
         assert response.status_code == 200, slug
-        assert "VarientLens" in response.text
+        assert "VariantLens" in response.text
         assert "text/html" in response.headers["content-type"]
 
     @pytest.mark.parametrize("slug", ["/nonsense", "/does-not-exist", "/admin",

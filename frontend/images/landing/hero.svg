@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="The VarientLens workspace: a plain-English query about a BRCA1 variant beside the Pathogenic call it produced, its confidence and the ACMG-style criteria applied">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="The VariantLens workspace: a plain-English query about a BRCA1 variant beside the Pathogenic call it produced, its confidence and the ACMG-style criteria applied">
   <!--
-    VarientLens landing imagery - hero.
+    VariantLens landing imagery - hero.
 
     This is the product, not a metaphor for it. The window is the workspace view
     with the one query the marketing page uses as its example, and every value in
@@ -68,7 +68,7 @@
   <text class="s" x="288" y="165" font-size="20" font-weight="700" fill="#FFFFFF"
         text-anchor="middle">V</text>
   <text class="s" x="316" y="166" font-size="26" font-weight="600" fill="#FFFFFF"
-        letter-spacing="0.2">VarientLens</text>
+        letter-spacing="0.2">VariantLens</text>
   <rect x="1080" y="142" width="150" height="32" rx="16" fill="#1B3A61"/>
   <text class="s" x="1155" y="164" font-size="19" fill="#FFFFFF" text-anchor="middle">Workspace</text>
   <text class="s" x="1258" y="165" font-size="19" fill="#A9BBD6" text-anchor="end">History</text>

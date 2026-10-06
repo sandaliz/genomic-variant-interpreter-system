@@ -1019,7 +1019,7 @@ async function doRegister(event){
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        username: document.getElementById('regUsername').value.trim(),
+        email: document.getElementById('regEmail').value.trim(),
         password: document.getElementById('regPassword').value
       })
     });
@@ -1028,6 +1028,8 @@ async function doRegister(event){
     // The session cookie is already set by the response.
     document.getElementById('regPassword').value = '';
     await refreshSession();
+    // Dismiss the modal only once the new session is established.
+    closeAuth();
   } catch (e){
     err.textContent = e.message;
   } finally {

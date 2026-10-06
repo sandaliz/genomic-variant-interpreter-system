@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A confidence score broken into the five weighted components that produced it: evidence strength, ClinVar consistency, supporting records, predictor agreement and an unavailable-evidence penalty, summing to 40 or moderate">
   <!--
-    VarientLens landing imagery - interpretation you can review (solution 02).
+    VariantLens landing imagery - interpretation you can review (solution 02).
 
     "Confidence: 40" is a number nobody can check. The five components that make
     it are checkable, so this is the breakdown instead of the badge: each rule,

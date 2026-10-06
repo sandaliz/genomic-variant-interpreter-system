@@ -690,7 +690,7 @@ async def create_pdf_report(
     doc = SimpleDocTemplate(
         buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42,
         title=f"Variant Interpretation Report - {request.variant_id}",
-        author="VarientLens / IT3041 Academic Prototype",
+        author="VariantLens / IT3041 Academic Prototype",
     )
     styles = getSampleStyleSheet()
     title = ParagraphStyle("TitleCustom", parent=styles["Title"], fontSize=18, leading=22,
@@ -705,7 +705,7 @@ async def create_pdf_report(
                            textColor=colors.HexColor("#667085"))
     story = [
         Paragraph("Genomic Variant Interpretation Report", title),
-        Paragraph("VarientLens · IT3041 academic decision-support prototype", subtitle),
+        Paragraph("VariantLens · IT3041 academic decision-support prototype", subtitle),
         Paragraph(f"<b>Variant:</b> {_pdf_text(request.variant_id)}", body),
         Spacer(1, 8),
     ]
@@ -1046,7 +1046,7 @@ def admin_decide_upgrade_request(
         # hand-off.
         get_mailer().send(
             to_email=row.user.email,
-            subject=f"Your VarientLens upgrade request was {row.status}",
+            subject=f"Your VariantLens upgrade request was {row.status}",
             body=upgrade_decision_body(row, row.target_plan.name,
                                        row.user.username),
         )
