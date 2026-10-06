@@ -264,7 +264,13 @@ class IntakeAgent:
         # Build variant_id for the message
         if query_type == "gene_variant":
             gene = validate_gene(entities["gene"])
-            variant_id = f"{gene}:{entities['hgvs']}"
+            hgvs = entities["hgvs"]
+            # The HGVS regex legitimately keeps a transcript prefix
+            # ("BRCA2:c.5946delT"), so strip a leading gene token before
+            # joining — otherwise the id reads "BRCA2:BRCA2:c.5946delT".
+            if hgvs and hgvs.upper().startswith(f"{gene}:"):
+                hgvs = hgvs[len(gene) + 1:]
+            variant_id = f"{gene}:{hgvs}"
         elif query_type == "variant_only":
             # Gene will be inferred by the Evidence Agent from the dataset
             variant_id = f"unknown:{entities['hgvs']}"

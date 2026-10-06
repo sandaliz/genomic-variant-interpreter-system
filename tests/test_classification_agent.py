@@ -492,3 +492,32 @@ class TestReviewRequiredFlag:
         class_msg = classifier.classify(evidence_msg, message_log)
         payload = class_msg.decrypt_payload()
         assert payload["review_required"] is False
+
+    def test_gene_only_query_returns_no_pathogenicity_call(
+        self, classifier, message_log
+    ):
+        """A gene-level listing must never carry a variant verdict.
+
+        "What variants are in BRCA2?" asks for an evidence listing, so the
+        Classification Agent must return a no-call result (none/0.0) rather
+        than scoring the top-ranked row as if it were the answer.
+        """
+        evidence_msg = AgentMessage(
+            variant_id="BRCA2:*",
+            stage="evidence_retrieved",
+            sender="evidence_retrieval_agent",
+            payload={
+                "found": True,
+                "query_type": "gene_only",
+                "gene": "BRCA2",
+                "total_variants_in_gene": 1934,
+            },
+        )
+        evidence_msg.encrypt_payload()
+        class_msg = classifier.classify(evidence_msg, message_log)
+        payload = class_msg.decrypt_payload()
+        assert payload["classification"] == "Not applicable (gene overview)"
+        assert payload["confidence"] == "none"
+        assert payload["confidence_numeric"] == 0.0
+        assert payload["reasoning_mode"] == "gene_overview"
+        assert payload["criteria_applied"] == []

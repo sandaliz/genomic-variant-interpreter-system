@@ -186,22 +186,14 @@ These are included in the updated `requirements.txt` but are optional for produc
 pip install matplotlib seaborn jupyter
 ```
 
-### TF-IDF Cache Version Warning (harmless)
+### TF-IDF Cache Versions
 
-Running the notebook or `evaluation.py` may print:
-
-```
-InconsistentVersionWarning: Trying to unpickle estimator TfidfVectorizer
-from version 1.9.0 when using version 1.8.0
-```
-
-This is scikit-learn noting that the cached TF-IDF index
-(`data/*_tfidf_cache.pkl`) was built by a different scikit-learn build. The cached
-vectors remain fully usable, and retrieval and all reported metrics are unaffected,
-so the warning can be ignored.
-
-To silence it, delete the caches and let the Evidence Agent rebuild them under your
-installed version:
+The TF-IDF index caches (`data/*_tfidf_cache.pkl`) are gitignored build
+artifacts. They are version-sensitive: a cache built under one scikit-learn
+release warns (`InconsistentVersionWarning`) when loaded under another. The
+shipped caches were rebuilt under the pinned `scikit-learn==1.8.0`, so no
+warning appears on the supported stack. After any scikit-learn upgrade,
+delete them and let the Evidence Agent rebuild:
 
 ```bash
 rm data/clinvar_variant_dataset_tfidf_cache.pkl \

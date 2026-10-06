@@ -5,7 +5,7 @@ ClinVar evidence: retrieval, ACMG-style reasoning, self-critique, and a
 report that shows its working.**
 
 ![Python](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-622-brightgreen)
+![Tests](https://img.shields.io/badge/tests-645-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-reported%20in%20CI-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -357,7 +357,7 @@ uvicorn api:app --reload --port 8000
 ### 5. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 622 tests — no database needed at all
+python3 -m pytest tests/ -v    # 645 tests — no database needed at all
 node --test tests/js/          # frontend JS unit tests
 python3 scripts/smoke_auth.py  # end-to-end check against the real PostgreSQL
 ```

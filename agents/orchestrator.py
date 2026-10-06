@@ -115,8 +115,36 @@ class VerifierAgent:
         ``verdict`` is ``"accept"`` or ``"revise"``. On ``"revise"`` the plan's
         budget is spent once, and ``directive`` tells the Classification Agent
         how to re-state the call.
+        Gene-level overviews ("What variants are in BRCA2?") carry no
+        pathogenicity call, so there is no confidence to justify — the
+        Verifier accepts them unconditionally.
         """
         level = (classification.get("confidence") or "low").lower()
+        if (classification.get("reasoning_mode") == "gene_overview"
+                or level == "none"):
+            result = {
+                "verdict": "accept",
+                "directive": None,
+                "checks": [
+                    {"check": "evidence_found", "passed": bool(evidence.get("found"))},
+                    {"check": "gene_overview_no_call", "passed": True},
+                ],
+                "issues": [],
+                "retrieval_mode": retrieval_mode,
+                "revised": revised,
+            }
+            message = AgentMessage(
+                variant_id=variant_id,
+                stage="verification_complete",
+                sender=self.name,
+                receiver="supervisor_agent",
+                message_type=MessageType.VERIFICATION_RESULT,
+                trace_id=trace_id,
+                payload=result,
+            )
+            message.encrypt_payload()
+            message_log.record(message)
+            return result
         exact = bool(evidence.get("exact_match"))
         found = bool(evidence.get("found"))
         consensus_backed = (

@@ -11,13 +11,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from agents.evidence_agent import EvidenceRetrievalAgent
+from agents.evidence_agent import EvidenceRetrievalAgent, _normalise_hgvs
 from agents.intake_agent import IntakeAgent
 from protocol.message import AgentMessage, MessageLog
 
 
 DATASET_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", "clinvar_variant_dataset.xlsx")
+
+
+class TestNormaliseHgvs:
+    def test_strips_gene_prefix_but_keeps_transcript(self):
+        assert _normalise_hgvs("BRCA2:c.5946delT") == "c.5946del"
+        assert _normalise_hgvs("c.5946delT") == "c.5946del"
+        row = _normalise_hgvs("NM_000059.4(BRCA2):c.5946del (p.Ser1982fs)")
+        assert "c.5946del" in row
+        assert _normalise_hgvs("NC_000017.10:g.41197778A>G") == "nc_000017.10:g.41197778a>g"
 
 
 @pytest.fixture
@@ -190,3 +199,30 @@ class TestCoverageFallbackFlag:
         assert payload["coverage_fallback"] is True
         assert payload["evidence_limitation"] is not None
         assert payload["ir_metadata"]["evidence_source"].startswith("clinvar_variant_summary")
+
+    def test_gene_prefixed_hgvs_still_hits_the_coverage_index(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        """A "GENE:c...." HGVS must not miss the fallback index.
+
+        The index stores transcript-prefixed forms
+        ("nm_000059.4(brca2):c.5946del"), so a gene-prefixed needle
+        ("brca2:c.5946del") is never a substring of a row. The normalizer
+        strips the gene token first; without that, the query fell through
+        to unrelated same-gene rows and scored them 90/100.
+        """
+        index_path = os.path.join(os.path.dirname(DATASET_PATH), "variant_summary_brca.tsv")
+        if not os.path.exists(index_path):
+            pytest.skip("variant_summary_brca.tsv not built (see data/DATA_SOURCE.md)")
+
+        intake_msg = intake_agent.process(
+            "Is BRCA2 BRCA2:c.5946delT pathogenic?", message_log
+        )
+        assert intake_msg.variant_id == "BRCA2:c.5946delT"
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["coverage_fallback"] is True
+        top = payload["top_k_results"][0]
+        assert top["match_type"] == "Exact variant match"
+        assert "5946del" in str(top.get("hgvs", "")).lower()

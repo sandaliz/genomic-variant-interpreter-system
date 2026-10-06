@@ -247,6 +247,11 @@ the LLM's self-reported `confidence` string is discarded, so the two can never d
 A genuine conflict — ClinVar's own `Conflicting` consensus when available,
 otherwise the dataset's `Conflicting_Classification_Flag` — always forces "low"
 on both the label and the number. VUS is never presented as high confidence.
+The Verifier's conservative cap (`apply_conservative_directive`, at most one
+round) lowers the headline to ≤34.9 when no exact match or reviewed consensus
+backs it; the pre-cap number is kept as `confidence_before_revision` and the
+report/UI state both ("scored X, lowered to Y") because the component bars
+describe the pre-cap inputs.
 
 **Responsible AI in classification:**
 - A genuine conflict (`ClinicalSignificance` = `Conflicting`, or the dataset flag
@@ -794,33 +799,30 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 
 ### 9.3 Unit Tests
 
-**622 passing across 24 files** in the last full run — 76 covering the
-agent/pipeline layer and 446 covering auth, security, entitlements, roles, admin,
+**645 passing across 24 files** in the last full run — 73 covering the
+agent/pipeline layer and 490 covering auth, security, entitlements, roles, admin,
 the MCP tools, frontend and review; **plus 82 further cases** added with the
 retrieval models and the analysis arithmetic: 47 in `tests/test_retrieval.py` and
 35 in `tests/test_evaluation_metrics.py`. Those two files are the only ones in the
 suite that assert arithmetic against hand-computed values (`make test` prints the
-current total). The pre-submission hardening pass added the final 18: 5 in
-`tests/test_pdf_auth.py` (PDF authentication and cross-account trail isolation,
-including the two-users-one-variant regression) and 13 in
-`tests/test_llm_output_checks.py` (ClinVar label withheld from the LLM prompt,
-LLM report verification, login timing shield).
+current total).
 
-**Agent / pipeline (76)**
-- **Intake Agent (13)** — entity extraction, query types, security, rejections, plus prompt-injection override/exfiltration rejection
-- **Evidence Agent (11)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback, plus `coverage_fallback` presence/value tests
-- **Classification Agent (22)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, and 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches)
-- **Orchestrator / control plane (16)** — Supervisor plans broad vs targeted retrieval; the Verifier accepts exact-match, consensus-backed and low-confidence calls and sends back over-confident ones; the conservative directive lowers the number (and therefore the label) without changing the classification; **nothing can ever raise confidence**; and the pipeline integration test asserts a plan and a verdict appear in both `pipeline_steps` and the audit trail, with self-correction bounded to one round
-- **LLM resilience (8)** — bounded SDK retry, 503 → fallback-model chain → `RuntimeError`, classifier and reporter degradation, direction-aware conflict semantics, plus end-to-end 503 cascade (rules + template fallback, encrypted message path)
-- **Cache isolation (6)** — per-user query-cache separation
-
-**Web / auth / product (446)**
-- **Frontend (134)** — static checks over `index.html`/`app.css`/`app.js` plus served-asset checks: page slugs, view routing, email-only sign-in, cookie/CSRF session policy, confirmation-dialog state, the profile skeleton-restoration fix, admin panel loading
+**Agent / pipeline (73)**
+- **Intake Agent (19)** — entity extraction, query types, security, rejections, plus prompt-injection override/exfiltration rejection
+- **Evidence Agent (14)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback, plus `coverage_fallback` presence/value tests, plus the gene-prefixed-HGVS fallback test ("BRCA2:c.5946delT" still hits the ClinVar coverage index) and the `_normalise_hgvs` unit test (gene token stripped, transcript kept)
+- **Classification Agent (23)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches), and the gene-overview no-call test (gene-level listing carries no variant verdict)
+- **Orchestrator / control plane (17)** — Supervisor plans broad vs targeted retrieval; the Verifier accepts exact-match, consensus-backed and low-confidence calls and sends back over-confident ones; the conservative directive lowers the number (and therefore the label) without changing the classification; **nothing can ever raise confidence**; gene-overview no-call bypass; and the pipeline integration test asserts a plan and a verdict appear in both `pipeline_steps` and the audit trail, with self-correction bounded to one round
+**Web / auth / product (490)**
+- **Frontend (146)** — static checks over `index.html`/`app.css`/`app.js` plus served-asset checks: page slugs, view routing, email-only sign-in, cookie/CSRF session policy, confirmation-dialog state, the profile skeleton-restoration fix, admin panel loading
 - **API keys (10)** — creation is gated on `plan.api_access` (403 on Free), the raw secret is returned once and never listed, `X-API-Key` authenticates, a plan downgrade disables existing keys, unknown and revoked keys are 401, and keys are scoped to their owner
 - **Audit export (5)** — the `plan.audit_export` gate returns 403 without the entitlement and 401 unauthenticated; the JSON export contains only the caller's own rows; the CSV export carries a header and an attachment disposition; an unknown format is a 422
 - **MCP tools (6)** — the module imports with no `mcp` package installed and `build_server()` fails with a clear "pip install mcp" message; `classify_variant` returns a structured result carrying the Responsible-AI block; a prompt-injection query is rejected; `retrieve_evidence` returns ranked records and honours `top_k`; the example queries are non-empty
 - **Admin (83)** — role gates, plan management, account mutation, login throttling (per-IP and per-account), and the cookie/CSRF session contract
 - **Auth (35)**, **upgrades (32)**, **password reset (25)**, **security (21)**, **profile (20)**, **entitlements (19)**, **analytics (19)**, **review sign-offs (17)**, **classify API (20)**
+- **LLM resilience (8)** — bounded SDK retry, 503 → fallback-model chain → `RuntimeError`, classifier and reporter degradation, direction-aware conflict semantics, plus end-to-end 503 cascade (rules + template fallback, encrypted message path)
+- **Cache isolation (6)** — per-user query-cache separation
+- **LLM output checks (12)** — ClinVar label withheld from the LLM prompt, LLM report verification, login timing shield
+- **PDF auth (6)** — PDF authentication and cross-account trail isolation, including the two-users-one-variant regression
 
 **Retrieval and analysis arithmetic (82)** — the only hand-computed assertions in the suite
 - **`test_retrieval.py` (47)** — BM25 against a three-document corpus worked through by hand (a term in every document must still have *positive* IDF; `b` must penalise long documents; `k1 = 0` must make term frequency irrelevant; the documented score of 0.90665); tokenisation against the HGVS forms the corpus actually contains, including the ways BM25's tokeniser deliberately differs from TF-IDF's; RRF symmetry, single-list documents and the k-insensitivity; score fusion normalisation; and every ranking metric — that `precision@k` divides by `k` and not by the list length, that nDCG@k discounts by rank and supports graded relevance, that AP@k rewards finding the right answer first, and that a total miss scores 0.0 rather than 1.0
@@ -1062,7 +1064,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 622 tests (no database required)
+python3 -m pytest tests/ -v    # 645 tests (no database required)
 node --test tests/js/          # frontend JS tests
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
@@ -1097,7 +1099,7 @@ This project fulfills all assignment requirements:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, IR metrics (Precision@K, Recall@K, Exact-match@K, **MRR@K, nDCG@K, MAP@K**), a **head-to-head TF-IDF/BM25/RRF ranker comparison**, **confidence calibration (ECE, MCE, Brier, Brier skill)** and **subgroup fairness by variant type, allele-frequency band and review status**, ablation comparison, and **622 passing unit tests** (76 agent/pipeline + 446 auth/security/entitlement/role/API-key/audit-export/MCP/frontend/review) **plus 82 further cases** for the retrieval models, fusion, ranking metrics and the calibration/fairness arithmetic, **plus 18 hardening-regression cases** for PDF auth, cross-account trail isolation, LLM output checks and the login timing shield (§9.3)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, IR metrics (Precision@K, Recall@K, Exact-match@K, **MRR@K, nDCG@K, MAP@K**), a **head-to-head TF-IDF/BM25/RRF ranker comparison**, **confidence calibration (ECE, MCE, Brier, Brier skill)** and **subgroup fairness by variant type, allele-frequency band and review status**, ablation comparison, and **645 passing unit tests** (73 agent/pipeline + 490 auth/security/entitlement/role/API-key/audit-export/MCP/frontend/review, of which 82 are retrieval-model/fusion/metric/calibration/fairness arithmetic and 18 are hardening-regression cases for PDF auth, cross-account trail isolation, LLM output checks and the login timing shield, plus 2 gene-overview no-call cases and 2 gene-prefixed-HGVS fallback cases) (§9.3)
 
 ## 14. References
 

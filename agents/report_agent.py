@@ -374,6 +374,27 @@ class ReportAgent:
                 lines.append(f"  - Supporting records: {components.get('supporting_records', 'N/A')}/20")
                 lines.append("  - Predictor agreement: "
                              + str(components.get("predictor_agreement", "N/A")).replace("_", " "))
+                # The bars above are the scorer's raw inputs. When the
+                # Verifier capped the headline, say so with both numbers —
+                # otherwise full components next to a low headline read as
+                # a contradiction.
+                if result.get("confidence_revised"):
+                    before = result.get("confidence_before_revision")
+                    shown = result.get("confidence_numeric")
+                    if before is not None:
+                        lines.append(
+                            f"  - Verifier cap: scored {before}/100 from the "
+                            f"inputs above; headline lowered to {shown}/100 "
+                            "because that confidence was not earned by an "
+                            "exact match or reviewed consensus."
+                        )
+                    else:
+                        lines.append(
+                            "  - Verifier cap: the headline was lowered from "
+                            "the score implied above because that confidence "
+                            "was not earned by an exact match or reviewed "
+                            "consensus."
+                        )
                 lines.append("")
 
             # Responsible AI: confidence ≠ medical certainty

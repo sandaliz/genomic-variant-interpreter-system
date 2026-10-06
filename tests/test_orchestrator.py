@@ -30,9 +30,23 @@ def _classification(level="high", consensus_from=None):
     return {
         "classification": "Pathogenic",
         "confidence": level,
-        "confidence_numeric": {"high": 80.0, "moderate": 50.0, "low": 10.0}[level],
+        "confidence_numeric": {"high": 80.0, "moderate": 50.0, "low": 10.0,
+                               "none": 0.0}[level],
         "consensus": {"final_from": consensus_from} if consensus_from else {},
     }
+
+
+class TestVerifierAcceptsGeneOverviewWithoutACall:
+    def test_gene_overview_is_accepted_unconditionally(self):
+        verdict = VerifierAgent().verify(
+            _evidence(exact_match=False),
+            {"classification": "Not applicable (gene overview)",
+             "confidence": "none", "confidence_numeric": 0.0,
+             "reasoning_mode": "gene_overview"},
+            MessageLog(), "t", "v",
+        )
+        assert verdict["verdict"] == "accept"
+        assert verdict["directive"] is None
 
 
 class TestSupervisorPlan:
@@ -134,6 +148,9 @@ class TestConservativeDirective:
         assert out["confidence_numeric"] < ClassificationAgent.CONF_MODERATE_BAR
         assert out["confidence"] == "low"
         assert out["confidence_revised"] is True
+        # The UI's bars render pre-cap inputs, so the pre-cap number must be
+        # kept alongside — otherwise full bars sit next to a low headline.
+        assert out["confidence_before_revision"] == 80.0
 
     def test_directive_never_changes_the_classification_itself(self):
         agent = ClassificationAgent.__new__(ClassificationAgent)

@@ -284,6 +284,12 @@ class VariantInterpretationSystem:
             "confidence_numeric": report_payload.get("confidence_numeric", 0.0),
             "reasoning_mode": report_payload.get("reasoning_mode", "rule_based"),
             "consensus": class_payload.get("consensus"),
+            # The bars in the UI render the raw scorer inputs, which describe
+            # the evidence *before* the Verifier's conservative cap. Without
+            # these two fields the panel shows full bars next to a capped
+            # number with no way to explain the gap.
+            "confidence_revised": bool(class_payload.get("confidence_revised", False)),
+            "confidence_before_revision": class_payload.get("confidence_before_revision"),
             "review_required": bool(class_payload.get("review_required", False)),
             "coverage_fallback": bool(evidence_payload.get("coverage_fallback", False)),
             "evidence_limitation": evidence_payload.get("evidence_limitation"),
@@ -447,6 +453,14 @@ if __name__ == "__main__":
 
     if "error" in result:
         print(result["error"])
+    elif result.get("is_gene_overview"):
+        print("\n" + "=" * 60)
+        print("GENE OVERVIEW (no pathogenicity call — evidence listing):")
+        print(f"  {result['evidence_summary']}")
+        print()
+        print("REPORT:")
+        print(result["report_text"])
+        print("=" * 60)
     else:
         print("\n" + "=" * 60)
         print("CLASSIFICATION:")

@@ -2690,13 +2690,30 @@ function renderConfidence(data){
   const justified = ver
     ? (ver.checks || []).find(c => c.check === 'confidence_justified')
     : null;
+  // The bars describe the scorer's raw inputs (pre-cap). When the Verifier
+  // lowered the number, the headline and the bars genuinely disagree — the
+  // cap is the explanation, so it is stated with both numbers rather than
+  // leaving full bars next to a low score unexplained.
+  const revised = !!data.confidence_revised;
+  const before = (data.confidence_before_revision !== null
+    && data.confidence_before_revision !== undefined)
+    ? fmtNum(data.confidence_before_revision, 0) : null;
+  const capNote = (revised && before !== null)
+    ? 'The bars show the evidence as scored (' + before + '/100); the verifier ' +
+      'lowered the headline to ' + fmtNum(pct, 0) + '/100 because that confidence ' +
+      'was not earned by an exact match or reviewed consensus.'
+    : (revised
+      ? 'The bars show the evidence as scored; the verifier lowered the headline ' +
+        'to ' + fmtNum(pct, 0) + '/100 because that confidence was not earned by ' +
+        'an exact match or reviewed consensus.'
+      : '');
   const note = justified && !justified.passed
     ? 'The verifier did not accept this confidence as earned by the evidence — '
       + 'see the control plane below for what it raised.'
-    : (ver
+    : (capNote || (ver
         ? 'The verifier checked that this confidence is earned by the evidence it '
           + 'rests on. Confidence reflects evidence strength, not medical certainty.'
-        : 'Confidence reflects evidence strength, not medical certainty.');
+        : 'Confidence reflects evidence strength, not medical certainty.'));
 
   host.classList.remove('hidden');
   host.innerHTML = '<div class="cb-grid">'

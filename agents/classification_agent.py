@@ -893,6 +893,7 @@ class ClassificationAgent:
         )
         if (not evidence.get("exact_match") and not consensus_backed
                 and numeric >= self.CONF_MODERATE_BAR):
+            result["confidence_before_revision"] = round(numeric, 1)
             numeric = min(numeric, self.CONF_MODERATE_BAR - 0.1)
             result["confidence_numeric"] = round(numeric, 1)
             result["confidence"] = self._confidence_level(numeric)
@@ -909,7 +910,66 @@ class ClassificationAgent:
         evidence = evidence_message.decrypt_payload()
 
         llm_used = False
-        
+
+        # --- Gene-level overview: no single variant was asked about ------
+        # "What variants are in BRCA2?" is an evidence listing, not a
+        # pathogenicity question. Scoring the top-ranked row and presenting
+        # it as *the* answer would misrepresent the query and could be
+        # misread as a verdict about the gene as a whole, so this path
+        # returns a no-call result. The Report Agent renders it through
+        # generate_gene_overview_report; confidence stays at none/0.0.
+        if evidence.get("query_type") == "gene_only":
+            gene = evidence.get("gene", "unknown")
+            total = evidence.get("total_variants_in_gene")
+            result = {
+                "classification": "Not applicable (gene overview)",
+                "confidence": "none",
+                "confidence_numeric": 0.0,
+                "criteria_applied": [],
+                "acmg_criteria_applied": [],
+                "computational_annotations": [],
+                "clinvar_context": [],
+                "population_observation": None,
+                "reasoning": (
+                    f"Gene-level listing for {gene}"
+                    + (f" ({total} indexed variants)" if total else "")
+                    + ": no single variant was asked about, so no "
+                      "pathogenicity call is made."
+                ),
+                "reasoning_mode": "gene_overview",
+                "responsible_ai": {
+                    "clinical_disclaimer": (
+                        "Automated classification is decision support only, "
+                        "not a diagnosis. This is an evidence listing for a "
+                        "gene, not a pathogenicity verdict."
+                    ),
+                    "mode": "rule_based",
+                    "confidence_source": "not_applicable_gene_overview",
+                    "conflict_adjusted": False,
+                    "fairness_limitation": (
+                        "Population-data limitation: Allele-frequency "
+                        "databases may have uneven representation across "
+                        "ancestry groups. Population frequency evidence "
+                        "should therefore be interpreted cautiously and "
+                        "should not be treated as equally informative for "
+                        "all populations."
+                    ),
+                },
+            }
+            message = AgentMessage(
+                variant_id=evidence_message.variant_id,
+                stage="classification_complete",
+                sender=self.name,
+                receiver="report_agent",
+                message_type=MessageType.CLASSIFICATION_RESULT,
+                trace_id=evidence_message.trace_id,
+                payload=result,
+            )
+            # Encrypt outgoing payload (security: encryption in transit)
+            message.encrypt_payload()
+            message_log.record(message)
+            return message
+
         # First get rule-based result (always fast)
         rule_result = self.classify_rule_based(evidence)
         

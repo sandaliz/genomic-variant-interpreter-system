@@ -290,6 +290,11 @@ class FullPipelineResponse(BaseModel):
     # the UI can show *why* a number is what it is -- the report text has always
     # carried this breakdown, but a client rendering its own view could not.
     confidence_components: Optional[dict] = None
+    # Whether the Verifier capped the scorer's number, and what it was before
+    # the cap. The component bars describe pre-cap inputs; without these the UI
+    # shows full bars next to a lowered headline with no explanation.
+    confidence_revised: bool = False
+    confidence_before_revision: Optional[float] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -360,6 +365,10 @@ class QueryResponse(BaseModel):
     # the UI can show *why* a number is what it is -- the report text has always
     # carried this breakdown, but a client rendering its own view could not.
     confidence_components: Optional[dict] = None
+    # Same revision provenance as QueryHistoryResult, so a re-opened run keeps
+    # its "lowered from X" explanation instead of reverting to bare bars.
+    confidence_revised: bool = False
+    confidence_before_revision: Optional[float] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -544,6 +553,8 @@ def classify(
         audit_trail=result["audit_trail"],
         agentic=result.get("agentic"),
         confidence_components=result.get("confidence_components"),
+        confidence_revised=result.get("confidence_revised", False),
+        confidence_before_revision=result.get("confidence_before_revision"),
         top_k_results=result["top_k_results"],
         ir_metadata=result["ir_metadata"],
         responsible_ai=result["responsible_ai"],

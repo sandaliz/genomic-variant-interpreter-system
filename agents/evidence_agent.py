@@ -100,6 +100,11 @@ def _normalise_hgvs(text) -> str:
     user query of "c.5946delT" has to be compared against ClinVar's stored
     "c.5946del" (appearing inside e.g.
     "NM_000059.4(BRCA2):c.5946del (p.Ser1982fs)").
+
+    A leading gene/transcript prefix ("BRCA2:c.5946delT") is stripped first:
+    the fallback index stores transcript-prefixed forms
+    ("nm_000059.4(brca2):c.5946del"), so a gene-prefixed needle would never be
+    a substring of a transcript-prefixed row and the lookup would miss.
     """
     if text is None:
         return ""
@@ -109,6 +114,14 @@ def _normalise_hgvs(text) -> str:
     except (TypeError, ValueError):
         pass
     value = str(text).strip().lower()
+    # Strip a leading "gene:" token ("brca2:c.5946delt" -> "c.5946delt").
+    # Transcript prefixes ("nm_...:c....") are kept: they also appear in the
+    # indexed rows, so they narrow rather than break the match.
+    gene_token, sep, rest = value.partition(":")
+    if sep and re.fullmatch(r"[a-z][a-z0-9]*", gene_token) and (
+        rest.startswith("c.") or rest.startswith("g.")
+    ):
+        value = rest
     return re.sub(r"(del|ins)([acgt])$", r"\1", value)
 
 
