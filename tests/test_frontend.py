@@ -137,6 +137,13 @@ class TestScriptReferences:
         assert "await refreshSession();\n    // Dismiss the modal" in registration
         assert "closeAuth();" in registration
 
+    def test_admin_accounts_table_does_not_render_query_drilldown_button(self):
+        render_start = JS.index("function renderAdminUsers")
+        render_end = JS.index("// ---- Admin drill-down", render_start)
+        table_renderer = JS[render_start:render_end]
+        assert "View queries" not in table_renderer
+        assert "acct-open" not in table_renderer
+
 
 class TestNoStaleUi:
     """The rail-level account UI was replaced; none of it should come back."""

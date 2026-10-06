@@ -1173,7 +1173,7 @@ function renderAdminUsers(users){
       '<td><div>' + escapeHtml(u.username) + '</div>'
       + '<div style="color:var(--ink-faint);font-size:11px;">' + escapeHtml(u.email) + '</div>'
       + '<div style="color:var(--ink-faint);font-size:10.5px;">' + escapeHtml(u.role) + '</div>'
-      + '<button class="acct-open" onclick="openAccount(' + u.id + ')">View queries</button></td>'
+      + '</td>'
       + '<td><select class="admin-select" onchange="adminChangePlan(' + u.id
       + ', this.value, this)">' + planOptions(u.plan_id) + '</select></td>'
       + '<td>' + u.used_this_month + '</td>'
