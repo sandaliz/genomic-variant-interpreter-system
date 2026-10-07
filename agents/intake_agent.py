@@ -97,6 +97,10 @@ _GENE_BEFORE_HGVS = re.compile(
 # question words such as "WHAT" and "IS" from being reported as genes.
 _GENE_TOKEN_PATTERN = re.compile(r"\b[A-Z]{2,}[0-9]*\b")
 _QUERY_WORDS = {"IS", "WHAT", "WHERE", "HOW", "TELL", "SHOW", "CLASSIFY", "THE"}
+_EVIDENCE_WORDS = {
+    "SIFT", "POLYPHEN", "CADD", "CLINVAR", "ACMG", "HGVS", "RSID",
+    "VARIANT", "GENE", "EFFECT", "IMPACT", "CONSEQUENCE", "PROTEIN",
+}
 _EVIDENCE_INTENT_PATTERNS = (
     ("population_frequency", re.compile(
         r"\b(common|rare|frequency|frequent|population|allele frequency|af)\b",
@@ -124,7 +128,11 @@ class IntakeAgent:
     def _unsupported_gene(cleaned: str) -> str | None:
         """Return an explicit unsupported gene token, if one is present."""
         for token in _GENE_TOKEN_PATTERN.findall(cleaned):
-            if token not in _QUERY_WORDS and token not in _ALLOWED_GENES:
+            if (
+                token not in _QUERY_WORDS
+                and token not in _EVIDENCE_WORDS
+                and token not in _ALLOWED_GENES
+            ):
                 return token
         return None
 

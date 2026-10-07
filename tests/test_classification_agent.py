@@ -45,6 +45,12 @@ class _StubLLM:
 
 
 class TestClassificationAgent:
+    def test_available_llm_is_selected_for_focused_intents(self, classifier):
+        evidence = {"intent": "population_frequency"}
+        assert classifier._should_use_llm(
+            evidence, {"confidence_numeric": 0, "classification": "VUS"}
+        ) is True
+
     def test_classify_rule_based_pathogenic(self, classifier):
         """High-impact + rare + damaging predictors -> Likely Pathogenic."""
         evidence = {
@@ -168,6 +174,31 @@ class TestClassificationAgent:
         assert "PP3_equivalent (predictors agree: damaging)" not in incomplete["criteria_applied"]
         assert not incomplete["confidence_components"]["predictor_available"]["complete"]
         assert incomplete["confidence_numeric"] < complete["confidence_numeric"]
+
+    def test_confidence_uses_continuous_evidence_components(self, classifier):
+        evidence = {
+            "found": True,
+            "impact": "MODERATE",
+            "sift_prediction": "deleterious",
+            "polyphen_prediction": None,
+            "cadd_score": 18.4,
+            "af_esp": 0.00003,
+            "af_exac": 0.00002,
+            "af_tgp": 0.00001,
+            "exact_match": True,
+            "top_k_results": [{"relevance_score": 0.63}, {"relevance_score": 0.21}],
+            "conflicting_classification_flag": 0,
+            "prior_classification": "Likely Pathogenic",
+            "prior_review_stars": 1,
+            "prior_review_status": "criteria provided, single submitter",
+        }
+        result = classifier.classify_rule_based(evidence)
+        assert 0 < result["confidence_components"]["allele_frequency_points"] < 10
+        assert result["confidence_components"]["predictor_score"] > 0
+        assert result["confidence_components"]["predictor_score"] < 20
+        reconciled = classifier.reconcile_with_consensus(result, evidence)
+        assert reconciled["independent_evidence_confidence_numeric"] != reconciled["consensus_confidence_numeric"]
+        assert reconciled["consensus_confidence_numeric"] == 35.0
 
     def test_classify_rule_based_not_found(self, classifier):
         """No evidence -> Unknown."""

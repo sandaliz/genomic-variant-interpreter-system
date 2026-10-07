@@ -122,7 +122,9 @@ def _normalise_hgvs(text) -> str:
         rest.startswith("c.") or rest.startswith("g.")
     ):
         value = rest
-    return re.sub(r"(del|ins)([acgt])$", r"\1", value)
+    # ClinVar may omit the inserted/deleted/duplicated base in its stored
+    # notation: c.5946delT -> c.5946del and c.5266dupC -> c.5266dup.
+    return re.sub(r"(del|ins|dup)([acgt])$", r"\1", value)
 
 
 def _hgvs_matches(haystack, needle) -> bool:
@@ -965,7 +967,13 @@ class EvidenceRetrievalAgent:
                 evidence["top_k_results"].append({
                     "gene": self._clean_value(row.get("Gene")),
                     "hgvs": self._clean_value(row.get("HGVS_notation")),
+                    "consequence": self._clean_value(row.get("Consequence")),
+                    "variant_type": self._clean_value(row.get("Variant_type")),
                     "impact": self._clean_value(row.get("IMPACT")),
+                    "af_esp": self._clean_value(row.get("AF_ESP")),
+                    "af_exac": self._clean_value(row.get("AF_EXAC")),
+                    "af_tgp": self._clean_value(row.get("AF_TGP")),
+                    "af_gnomad": self._clean_value(row.get("AF_gnomAD")),
                     "relevance_score": float(row.get("relevance_score", 0)),
                     "relevance_explanation": row.get("relevance_explanation", ""),
                     "match_type": row.get("match_type", "TF-IDF text similarity"),
@@ -973,6 +981,9 @@ class EvidenceRetrievalAgent:
                     "sift_prediction": self._clean_value(row.get("SIFT_prediction")),
                     "polyphen_prediction": self._clean_value(row.get("PolyPhen_prediction")),
                     "cadd_score": self._clean_value(row.get("CADD_score")),
+                    "prior_classification": self._clean_value(row.get("ClinicalSignificance")),
+                    "prior_review_status": self._clean_value(row.get("ClinVarReviewStatus")),
+                    "prior_review_stars": self._clean_value(row.get("ClinVarReviewStars")),
                     "predictor_available": {
                         "sift": bool(row_sift_available),
                         "polyphen": bool(row_polyphen_available),

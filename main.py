@@ -270,9 +270,14 @@ class VariantInterpretationSystem:
         display_variant_id = report_msg.variant_id
         if resolved_gene and display_variant_id.startswith("unknown:"):
             display_variant_id = display_variant_id.replace("unknown:", f"{resolved_gene}:", 1)
+        report_text = report_payload.get("report_text", "")
+        if display_variant_id != report_msg.variant_id:
+            report_text = report_text.replace(
+                report_msg.variant_id, display_variant_id
+            )
 
         return {
-            "report_text": report_payload.get("report_text", ""),
+            "report_text": report_text,
             "evidence_summary": report_payload.get("evidence_summary", ""),
             "variant_id": display_variant_id,
             # End-to-end id of this run. Returned so the API can persist it
@@ -282,7 +287,15 @@ class VariantInterpretationSystem:
             "classification": report_payload.get("classification", ""),
             "confidence": report_payload.get("confidence", "none"),
             "confidence_numeric": report_payload.get("confidence_numeric", 0.0),
+            "independent_evidence_confidence_numeric": class_payload.get(
+                "independent_evidence_confidence_numeric"
+            ),
+            "consensus_confidence_numeric": class_payload.get(
+                "consensus_confidence_numeric"
+            ),
+            "confidence_source": class_payload.get("confidence_source"),
             "reasoning_mode": report_payload.get("reasoning_mode", "rule_based"),
+            "report_mode": report_payload.get("report_mode", "rule_based"),
             "consensus": class_payload.get("consensus"),
             # The bars in the UI render the raw scorer inputs, which describe
             # the evidence *before* the Verifier's conservative cap. Without
@@ -309,6 +322,7 @@ class VariantInterpretationSystem:
                 "revision_rounds": revision_rounds,
             },
             "top_k_results": evidence_payload.get("top_k_results", []),
+            "exact_match": bool(evidence_payload.get("exact_match", False)),
             "ir_metadata": evidence_payload.get("ir_metadata", {}),
             # The inputs the confidence score was computed from. The report text
             # has always carried this breakdown as prose; exposing the numbers

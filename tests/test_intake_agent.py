@@ -82,6 +82,19 @@ class TestIntakeAgent:
         assert payload["query_type"] == "rsid"
         assert payload["intent"] == "population_frequency"
 
+    def test_protein_predictor_question_does_not_treat_sift_as_gene(
+        self, intake_agent, message_log
+    ):
+        msg = intake_agent.process(
+            "Do SIFT and PolyPhen predict a damaging effect for BRCA1 rs80356943?",
+            message_log,
+        )
+        payload = msg.decrypt_payload()
+        assert payload["gene"] == "BRCA1"
+        assert payload["rsid"] == "rs80356943"
+        assert payload["query_type"] == "rsid"
+        assert payload["intent"] == "protein_impact"
+
     def test_process_gene_only_query(self, intake_agent, message_log):
         """Should handle 'What variants are in BRCA1?' as a gene-only query."""
         msg = intake_agent.process("What variants are in BRCA1?", message_log)

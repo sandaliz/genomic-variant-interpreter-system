@@ -637,6 +637,10 @@
          <kbd>&#8984;</kbd> + <kbd>K</kbd> for commands</p>
 
       <div class="examples" id="examples"></div>
+      <button type="button" class="examples-toggle" id="examplesToggle"
+              onclick="toggleWorkspaceExamples()" hidden>
+        Browse example queries
+      </button>
 
       <button id="submitBtn" onclick="classifyVariant()">Analyze variant</button>
       <div class="followup-panel" id="followupPanel" hidden>
@@ -1118,6 +1122,8 @@
      finish in complete silence, so a success was indistinguishable from a click
      that missed. aria-live so it is announced rather than only shown. -->
 <div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
+<button type="button" class="back-to-top" id="backToTop" onclick="scrollToTop()"
+        aria-label="Back to top" title="Back to top">↑</button>
 
 <script src="/static/app.js"></script>
 </body>

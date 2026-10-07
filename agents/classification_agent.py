@@ -203,91 +203,91 @@ class ClassificationAgent:
     # Numeric confidence computation
     # ------------------------------------------------------------------
     def _compute_confidence_score(self, evidence: dict, rule_score: int) -> dict:
-        """
-        Derive a numeric confidence score (0-100) and a categorical
-        confidence level from evidence components.
-
-        Components:
-          - |rule_score| / max(|score|) -> evidence strength (0-40 points)
-          - ClinVar evidence consistency -> conflict flag (0 or -20)
-          - Number of supporting records (top-K results) -> 0-20 points
-          - Predictor agreement (SIFT + PolyPhen concordance) -> 0-20 points
-
-        Returns: {"numeric": float, "level": str, "components": dict}
-        """
+        """Compute a continuous score for evidence independent of ClinVar."""
         components = {}
         predictor_availability = self._predictor_availability(evidence)
         components["predictor_available"] = predictor_availability
 
-        # 1. Evidence strength from rule score (0-40 points)
-        #    |score| of 4+ is "strong", 2-3 is "moderate", 0-1 is "weak"
-        abs_score = abs(rule_score)
-        if abs_score >= 4:
-            strength_score = 40
-        elif abs_score >= 2:
-            strength_score = 25
-        elif abs_score >= 1:
-            strength_score = 10
-        else:
-            strength_score = 0
-        components["evidence_strength"] = strength_score
+        # Rule evidence contributes continuously rather than in four buckets.
+        strength_score = min(30.0, abs(float(rule_score)) * 6.0)
+        components["evidence_strength"] = round(strength_score, 1)
 
-        # 2. ClinVar evidence consistency (0 or -20)
         conflict = self._is_conflicting(evidence)
-        if conflict:
-            consistency_score = -20
-            components["clinvar_consistency"] = "conflicting_submitter_evidence"
-        else:
-            consistency_score = 10
-            components["clinvar_consistency"] = "submitter_agreement"
+        consistency_score = 0.0 if conflict else 10.0
+        components["clinvar_consistency"] = (
+            "conflicting_submitter_evidence" if conflict else "submitter_agreement"
+        )
 
-        # 3. Number of supporting records (0-20 points)
+        # Retrieval quality combines exactness, relevance, and record coverage.
         top_k = evidence.get("top_k_results", [])
         num_supporting = len(top_k)
-        if num_supporting >= 5:
-            support_score = 20
-        elif num_supporting >= 3:
-            support_score = 15
-        elif num_supporting >= 1:
-            support_score = 8
-        else:
-            support_score = 0
-        components["supporting_records"] = support_score
+        top_relevance = max(
+            (float(row.get("relevance_score") or 0.0)
+             for row in top_k if isinstance(row, dict)),
+            default=0.0,
+        )
+        relevance_points = min(8.0, max(0.0, top_relevance) * 8.0)
+        record_points = min(7.0, num_supporting * 1.75)
+        exact_points = 5.0 if evidence.get("exact_match") else 0.0
+        retrieval_points = relevance_points + record_points + exact_points
+        components["retrieval_quality"] = round(retrieval_points, 1)
+        components["supporting_records"] = round(record_points, 1)
+        components["exact_match_points"] = exact_points
+        components["top_relevance"] = round(top_relevance, 3)
 
-        # 4. Predictor agreement (SIFT + PolyPhen concordance) (0-20 points)
+        # Each available predictor receives partial credit; agreement adds a
+        # separate bonus instead of making both predictors all-or-nothing.
         sift = str(evidence.get("sift_prediction")).lower() if predictor_availability["sift"] else ""
         polyphen = str(evidence.get("polyphen_prediction")).lower() if predictor_availability["polyphen"] else ""
+        predictor_score = (
+            (5.0 if predictor_availability["sift"] else 0.0)
+            + (5.0 if predictor_availability["polyphen"] else 0.0)
+            + (4.0 if predictor_availability["cadd"] else 0.0)
+        )
+        agreement = (
+            predictor_availability["sift_polyphen"]
+            and (("deleterious" in sift and "damaging" in polyphen)
+                 or ("tolerated" in sift and "benign" in polyphen))
+        )
+        if agreement:
+            predictor_score += 6.0
         if predictor_availability["sift_polyphen"] and "deleterious" in sift and "damaging" in polyphen:
-            predictor_score = 20
             components["predictor_agreement"] = "sift_deleterious_polyphen_damaging"
         elif predictor_availability["sift_polyphen"] and "tolerated" in sift and "benign" in polyphen:
-            predictor_score = 15
             components["predictor_agreement"] = "sift_tolerated_polyphen_benign"
         else:
-            predictor_score = 0 if not predictor_availability["sift_polyphen"] else 5
-            components["predictor_agreement"] = "not_available" if not predictor_availability["sift_polyphen"] else "mixed_predictors"
-
-        unavailable_penalty = 0
-        if not predictor_availability["sift_polyphen"]:
-            unavailable_penalty += 10
-        if not predictor_availability["cadd"]:
-            unavailable_penalty += 5
-        components["unavailable_evidence_penalty"] = unavailable_penalty
-
-        # Compute total
-        raw_total = (
-            strength_score + consistency_score + support_score + predictor_score
-            - unavailable_penalty
+            components["predictor_agreement"] = (
+                "not_available" if not predictor_availability["sift_polyphen"]
+                else "mixed_predictors"
+            )
+        components["predictor_score"] = round(predictor_score, 1)
+        components["unavailable_evidence_penalty"] = round(
+            15.0 - (
+                (5.0 if predictor_availability["sift"] else 0.0)
+                + (5.0 if predictor_availability["polyphen"] else 0.0)
+                + (4.0 if predictor_availability["cadd"] else 0.0)
+            ), 1
         )
-        # Clamp to 0-100
-        numeric_confidence = max(0, min(100, raw_total))
 
-        # Map to categorical level (single source of truth: label from number)
-        level = self._confidence_level(numeric_confidence)
+        # Rarity is continuous on a log scale: absent/very rare evidence gets
+        # more credit, while the BA1 proxy (1e-3) receives no rarity credit.
+        af_values = ("af_esp", "af_exac", "af_tgp")
+        if not any(self._available(evidence.get(key)) for key in af_values):
+            frequency_points = 0.0
+        else:
+            max_af = self._max_allele_freq(evidence)
+            frequency_points = 10.0 if max_af <= 0 else max(
+                0.0, min(10.0, 10.0 * (1.0 - (math.log10(max_af) + 5.0) / 2.0))
+            )
+        components["allele_frequency_points"] = round(frequency_points, 1)
 
+        numeric_confidence = max(0.0, min(100.0, (
+            strength_score + consistency_score + retrieval_points
+            + predictor_score + frequency_points
+        )))
         return {
             "numeric": round(numeric_confidence, 1),
-            "level": level,
+            "level": self._confidence_level(numeric_confidence),
             "components": components,
         }
 
@@ -300,6 +300,9 @@ class ClassificationAgent:
                 "classification": "Unknown",
                 "confidence": "none",
                 "confidence_numeric": 0.0,
+                "independent_evidence_confidence_numeric": 0.0,
+                "consensus_confidence_numeric": None,
+                "confidence_source": "no_evidence",
                 "score": 0,
                 "criteria_applied": [],
                 "acmg_criteria_applied": [],
@@ -412,7 +415,10 @@ class ClassificationAgent:
         # NUMBER (not just the label) so the two can never disagree -- the
         # label is re-derived from the number below.
         if conflict:
-            numeric = min(numeric, self.CONF_MODERATE_BAR - 0.1)
+            # Leave a visible one-point gap below the moderate threshold.
+            # Otherwise 34.9 is rounded to "35/100" in the UI while its
+            # categorical level is still low, which is misleading.
+            numeric = min(numeric, self.CONF_MODERATE_BAR - 1.0)
             confidence_info["reason"] = "Conflicting submitter evidence detected"
             clinvar_context.append("Prior submitters disagreed on this variant (ClinVar context, not an ACMG criterion)")
 
@@ -458,6 +464,9 @@ class ClassificationAgent:
             "classification": classification,
             "confidence": confidence_info["level"],
             "confidence_numeric": confidence_info["numeric"],
+            "independent_evidence_confidence_numeric": confidence_info["numeric"],
+            "consensus_confidence_numeric": None,
+            "confidence_source": "independent_evidence",
             "score": score,
             "criteria_applied": criteria,
             "acmg_criteria_applied": list(criteria),
@@ -653,7 +662,9 @@ class ClassificationAgent:
             # never just the label, so the two cannot disagree.
             conflict = self._is_conflicting(evidence)
             if conflict:
-                numeric = min(numeric, self.CONF_MODERATE_BAR - 0.1)
+                # Keep the displayed integer unambiguously below the moderate
+                # threshold; 34.9 would otherwise render as 35/100 but remain low.
+                numeric = min(numeric, self.CONF_MODERATE_BAR - 1.0)
 
             # Responsible AI: VUS is never presented as high confidence
             if cls == CL_VUS:
@@ -712,32 +723,12 @@ class ClassificationAgent:
     # ------------------------------------------------------------------
     def _should_use_llm(self, evidence: dict, rule_result: dict) -> bool:
         """
-        Smart LLM usage: only use LLM for complex/ambiguous cases.
-        Skip LLM for clear-cut cases to improve performance.
+        Use LLM whenever a configured client is available.
+
+        The caller checks ``self.llm.available`` before invoking this method,
+        so the only no-LLM path is an absent or invalid API key.
         """
-        if not self.smart_llm:
-            return True  # Always use LLM if smart mode is disabled
-        
-        # Skip LLM for high-confidence clear cases
-        confidence = rule_result.get("confidence_numeric", 0)
-        classification = rule_result.get("classification", "")
-        
-        # Use rule-based for clear cases:
-        # - High confidence (>=70) with non-VUS classification
-        if confidence >= 70 and "Uncertain" not in classification:
-            return False
-        
-        # Use LLM for ambiguous cases:
-        # - Low confidence (<50)
-        # - VUS classifications
-        if confidence < 50 or "Uncertain" in classification:
-            return True
-            
-        # Borderline cases get LLM review
-        if 50 <= confidence < 70:
-            return True
-            
-        return False
+        return True
 
     # ------------------------------------------------------------------
     # Consensus reconciliation (ClinVar)
@@ -775,6 +766,18 @@ class ClassificationAgent:
         except (TypeError, ValueError):
             return 0
 
+    @classmethod
+    def _consensus_confidence(cls, evidence: dict) -> tuple[float | None, str | None]:
+        """Return graduated confidence for the available ClinVar review level."""
+        if not evidence.get("prior_classification"):
+            return None, None
+        stars = cls._review_stars(evidence.get("prior_review_stars"))
+        status = str(evidence.get("prior_review_status") or "").lower()
+        score = {0: 20.0, 1: 35.0, 2: 55.0, 3: 80.0}.get(min(stars, 3), 20.0)
+        if "expert panel" in status:
+            score = max(score, 80.0)
+        return round(score, 1), f"ClinVar review level: {stars} star(s)"
+
     def reconcile_with_consensus(self, result: dict, evidence: dict) -> dict:
         """
         Reconcile the agent's own ACMG-style call against ClinVar's consensus.
@@ -796,6 +799,7 @@ class ClassificationAgent:
         stars = self._review_stars(evidence.get("prior_review_stars"))
         evidence_based = result.get("classification")
         consensus_call = self._consensus_call(prior)
+        consensus_score, consensus_source = self._consensus_confidence(evidence)
 
         # Guarantee the human-review flag is present and False by default on every
         # path. It is only ever set True below, so without this the key would be
@@ -811,6 +815,8 @@ class ClassificationAgent:
             "agreement": None,
             "final_from": "evidence_based",
             "note": None,
+            "confidence_numeric": consensus_score,
+            "confidence_source": consensus_source,
         }
 
         if consensus_call is None:
@@ -857,7 +863,7 @@ class ClassificationAgent:
             and stars >= self.CONSENSUS_DEFER_STARS
         ):
             evidence_num = float(result.get("confidence_numeric") or 0.0)
-            floor = 80.0 if stars >= 3 else 50.0  # 3*+ -> high, 2* -> moderate
+            floor = consensus_score or 0.0
             if evidence_num < floor:
                 block["evidence_based_confidence"] = result.get("confidence")
                 block["evidence_based_confidence_numeric"] = round(evidence_num, 1)
@@ -867,6 +873,18 @@ class ClassificationAgent:
                 )
 
         result["consensus"] = block
+        result["consensus_confidence_numeric"] = consensus_score
+        result["independent_evidence_confidence_numeric"] = round(
+            float(result.get("independent_evidence_confidence_numeric")
+                  or result.get("confidence_numeric") or 0.0), 1
+        )
+        if consensus_score is not None and (
+            block["final_from"] == "clinvar_consensus"
+            or result.get("classification") == consensus_call
+        ):
+            result["confidence_source"] = "clinvar_consensus"
+        elif consensus_score is not None:
+            result["confidence_source"] = "independent_evidence_with_consensus_disagreement"
         return result
 
     def apply_conservative_directive(self, result: dict, evidence: dict) -> dict:
@@ -970,23 +988,13 @@ class ClassificationAgent:
             message_log.record(message)
             return message
 
-        # First get rule-based result (always fast)
-        rule_result = self.classify_rule_based(evidence)
-        
-        # Decide whether to use LLM based on case complexity
-        if self.use_llm and self.llm.available:
-            if self._should_use_llm(evidence, rule_result):
-                result, llm_used = self.classify_with_llm(evidence)
-                result["smart_llm_skip_reason"] = None
-            else:
-                result = rule_result
-                result["smart_llm_skip_reason"] = "High-confidence clear case, LLM skipped for performance"
-                llm_used = False
-        else:
-            result = rule_result
-
-        # Keep marker of which mode was used
-        result["reasoning_mode"] = "llm" if llm_used else "rule_based"
+        # Classification is deterministic and local. Gemini is used once,
+        # later by the Report Agent, to explain these verified results. Keeping
+        # the classifier as the source of truth prevents a second network call
+        # and prevents an LLM from changing the classification or confidence.
+        result = self.classify_rule_based(evidence)
+        result["reasoning_mode"] = "rule_based"
+        result["llm_used_for_classification"] = False
 
         # Reconcile the agent's own call against ClinVar's reviewed consensus
         # (only possible when the enriched workbook supplies prior labels).

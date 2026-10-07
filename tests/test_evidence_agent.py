@@ -23,6 +23,7 @@ DATASET_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 class TestNormaliseHgvs:
     def test_strips_gene_prefix_but_keeps_transcript(self):
         assert _normalise_hgvs("BRCA2:c.5946delT") == "c.5946del"
+        assert _normalise_hgvs("BRCA1:c.5266dupC") == "c.5266dup"
         assert _normalise_hgvs("c.5946delT") == "c.5946del"
         row = _normalise_hgvs("NM_000059.4(BRCA2):c.5946del (p.Ser1982fs)")
         assert "c.5946del" in row
@@ -58,6 +59,27 @@ class TestEvidenceRetrievalAgent:
         assert payload["hgvs"] == "NC_000017.10:g.41197778A>G"
         assert payload["exact_match"] is True
         assert payload["relevance_score"] is not None
+        top = payload["top_k_results"][0]
+        assert top["consequence"] is not None
+        assert top["variant_type"] is not None
+        assert "af_esp" in top
+        assert "prior_classification" in top
+
+    def test_duplication_query_uses_clinvar_fallback_exactly(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        intake_msg = intake_agent.process(
+            "Is BRCA1:c.5266dupC pathogenic?", message_log
+        )
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["found"] is True
+        assert payload["exact_match"] is True
+        assert payload["coverage_fallback"] is True
+        assert payload["hgvs"].lower().find("c.5266dup") >= 0
+        assert payload["prior_classification"] == "Pathogenic"
+        assert int(payload["prior_review_stars"]) == 3
 
     def test_gene_only_retrieval(self, evidence_agent, intake_agent, message_log):
         """Should retrieve variants for a gene with top-K results."""

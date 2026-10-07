@@ -160,11 +160,14 @@ class ReportAgent:
             parts.append(f"Predicted impact: {impact}")
 
         # Computational predictors
-        parts.append(f"SIFT prediction: {self._display(evidence.get('sift_prediction'))}")
-        parts.append(f"PolyPhen prediction: {self._display(evidence.get('polyphen_prediction'))}")
-
-        # CADD score
-        parts.append(f"CADD score: {self._display(evidence.get('cadd_score'))}")
+        for label, key in (
+            ("SIFT prediction", "sift_prediction"),
+            ("PolyPhen prediction", "polyphen_prediction"),
+            ("CADD score", "cadd_score"),
+        ):
+            value = evidence.get(key)
+            if self._display(value) != "not available":
+                parts.append(f"{label}: {value}")
 
         # Population frequency
         frequencies = [
@@ -173,8 +176,8 @@ class ReportAgent:
                 evidence.get("af_tgp"), evidence.get("af_gnomad"),
             ) if value is not None
         ]
-        max_af = max(frequencies) if frequencies else "not available"
-        parts.append(f"Max population allele frequency: {max_af}")
+        if frequencies:
+            parts.append(f"Max population allele frequency: {max(frequencies)}")
 
         # Conflicting classification (direction-aware -- see helper above)
         conflict = _is_directional_conflict(evidence)
@@ -308,21 +311,28 @@ class ReportAgent:
             lines.append("Evidence considered:")
             lines.append(f"  - Gene: {evidence.get('gene')}")
             lines.append(f"  - Variant: {evidence.get('hgvs')}")
-            lines.append(f"  - Variant consequence: {self._display(evidence.get('consequence'))}")
-            lines.append(f"  - Predicted impact: {self._display(evidence.get('impact'))}")
-            lines.append(f"  - SIFT prediction: {self._display(evidence.get('sift_prediction'))}")
-            lines.append(f"  - PolyPhen prediction: {self._display(evidence.get('polyphen_prediction'))}")
-            lines.append(f"  - CADD score: {self._display(evidence.get('cadd_score'))}")
+            available_fields = (
+                ("Variant consequence", evidence.get("consequence")),
+                ("Variant type", evidence.get("variant_type")),
+                ("Predicted impact", evidence.get("impact")),
+                ("SIFT prediction", evidence.get("sift_prediction")),
+                ("PolyPhen prediction", evidence.get("polyphen_prediction")),
+                ("CADD score", evidence.get("cadd_score")),
+            )
+            for label, value in available_fields:
+                if self._display(value) != "not available":
+                    lines.append(f"  - {label}: {value}")
             frequencies = [
                 value for value in (
                     evidence.get("af_esp"), evidence.get("af_exac"),
                     evidence.get("af_tgp"), evidence.get("af_gnomad"),
                 ) if value is not None
             ]
-            lines.append(
-                "  - Population frequency (max across ESP/ExAC/1000G/gnomAD): "
-                + (str(max(frequencies)) if frequencies else "not available")
-            )
+            if frequencies:
+                lines.append(
+                    "  - Population frequency (max across ESP/ExAC/1000G/gnomAD): "
+                    + str(max(frequencies))
+                )
             conflict = _is_directional_conflict(evidence)
             if evidence.get("prior_classification"):
                 lines.append(
@@ -382,12 +392,22 @@ class ReportAgent:
             components = result.get("confidence_components", {})
             if components:
                 lines.append("Confidence breakdown:")
-                lines.append(f"  - Evidence strength: {components.get('evidence_strength', 'N/A')}/40")
+                lines.append(f"  - Rule evidence: {components.get('evidence_strength', 'N/A')}/30")
                 lines.append("  - Submitter consistency: "
                              + str(components.get("clinvar_consistency", "N/A")).replace("_", " "))
-                lines.append(f"  - Supporting records: {components.get('supporting_records', 'N/A')}/20")
-                lines.append("  - Predictor agreement: "
-                             + str(components.get("predictor_agreement", "N/A")).replace("_", " "))
+                lines.append(f"  - Retrieval quality: {components.get('retrieval_quality', 'N/A')}/20")
+                lines.append(f"  - Predictor evidence: {components.get('predictor_score', 'N/A')}/20")
+                lines.append(f"  - Allele-frequency evidence: {components.get('allele_frequency_points', 'N/A')}/10")
+                if result.get("independent_evidence_confidence_numeric") is not None:
+                    lines.append(
+                        "  - Independent evidence confidence: "
+                        f"{result['independent_evidence_confidence_numeric']}/100"
+                    )
+                if result.get("consensus_confidence_numeric") is not None:
+                    lines.append(
+                        "  - Consensus confidence: "
+                        f"{result['consensus_confidence_numeric']}/100"
+                    )
                 # The bars above are the scorer's raw inputs. When the
                 # Verifier capped the headline, say so with both numbers —
                 # otherwise full components next to a low headline read as
@@ -513,19 +533,25 @@ class ReportAgent:
                     "from the indexed evidence."
                 )
         elif intent == "protein_impact":
-            lines.extend([
-                f"Variant consequence: {self._display(evidence.get('consequence'))}",
-                f"Predicted impact: {self._display(evidence.get('impact'))}",
-                f"SIFT: {self._display(evidence.get('sift_prediction'))}",
-                f"PolyPhen: {self._display(evidence.get('polyphen_prediction'))}",
-                f"CADD: {self._display(evidence.get('cadd_score'))}",
-            ])
+            for label, key in (
+                ("Variant consequence", "consequence"),
+                ("Predicted impact", "impact"),
+                ("SIFT", "sift_prediction"),
+                ("PolyPhen", "polyphen_prediction"),
+                ("CADD", "cadd_score"),
+            ):
+                value = evidence.get(key)
+                if self._display(value) != "not available":
+                    lines.append(f"{label}: {value}")
         elif intent == "variant_consequence":
-            lines.extend([
-                f"Variant consequence: {self._display(evidence.get('consequence'))}",
-                f"Variant type: {self._display(evidence.get('variant_type'))}",
-                f"Predicted impact: {self._display(evidence.get('impact'))}",
-            ])
+            for label, key in (
+                ("Variant consequence", "consequence"),
+                ("Variant type", "variant_type"),
+                ("Predicted impact", "impact"),
+            ):
+                value = evidence.get(key)
+                if self._display(value) != "not available":
+                    lines.append(f"{label}: {value}")
         elif intent == "prior_classifications":
             lines.extend([
                 f"ClinVar classification: {self._display(evidence.get('prior_classification'))}",
@@ -708,11 +734,14 @@ class ReportAgent:
             )
             
         except (RuntimeError, ConnectionError, TimeoutError, json.JSONDecodeError) as e:
-            # Fallback to separate calls if batch fails
-            print(f"[report_agent] Batch LLM failed, using separate calls: {e}")
+            # Never retry with a second LLM request. Preserve a fast,
+            # complete deterministic report when the single call fails.
+            print(f"[report_agent] Batch LLM failed, using template report: {e}")
             return (
-                self.generate_report_with_llm(evidence, result, variant_id, top_k_results),
-                self.summarize_with_llm(evidence, result)
+                self.generate_report_template(
+                    evidence, result, variant_id, top_k_results=top_k_results
+                ),
+                self.summarize_evidence(evidence),
             )
 
     # ------------------------------------------------------------------
@@ -810,6 +839,7 @@ class ReportAgent:
         # as "the answer" would misrepresent what was asked and could be
         # misread as a statement about the gene as a whole. ---
         if evidence.get("query_type") == "gene_only":
+            report_mode = "rule_based"
             report_text = self.generate_gene_overview_report(evidence, result)
             evidence_summary = (
                 f"Showing the {len(top_k_results)} most evidence-complete of "
@@ -820,18 +850,14 @@ class ReportAgent:
         # --- NLP: Summarization step ---
         # Generate a concise summary of the evidence (extractive or abstractive)
         elif self.use_llm and self.llm.available:
-            if self.batch_llm:
-                # Use batch LLM call for both summary and report
-                report_text, evidence_summary = self.generate_report_with_llm_batch(
-                    evidence, result, variant_id, top_k_results=top_k_results
-                )
-            else:
-                # Separate LLM calls
-                evidence_summary = self.summarize_with_llm(evidence, result)
-                report_text = self.generate_report_with_llm(
-                    evidence, result, variant_id, top_k_results=top_k_results
-                )
+            report_mode = "llm_explanation"
+            # One Gemini call returns both the evidence summary and narrative.
+            # The deterministic classification above remains authoritative.
+            report_text, evidence_summary = self.generate_report_with_llm_batch(
+                evidence, result, variant_id, top_k_results=top_k_results
+            )
         else:
+            report_mode = "rule_based"
             evidence_summary = self.summarize_evidence(evidence)
             report_text = self.generate_report_template(
                 evidence, result, variant_id, top_k_results=top_k_results
@@ -850,6 +876,13 @@ class ReportAgent:
                 "classification": result.get("classification", ""),
                 "confidence": result.get("confidence", "none"),
                 "confidence_numeric": result.get("confidence_numeric", 0.0),
+                "independent_evidence_confidence_numeric": result.get(
+                    "independent_evidence_confidence_numeric"
+                ),
+                "consensus_confidence_numeric": result.get(
+                    "consensus_confidence_numeric"
+                ),
+                "confidence_source": result.get("confidence_source"),
                 "responsible_ai": result.get("responsible_ai", {}),
                 "criteria_applied": result.get("criteria_applied", []),
                 "acmg_criteria_applied": result.get("acmg_criteria_applied", result.get("criteria_applied", [])),
@@ -857,6 +890,7 @@ class ReportAgent:
                 "clinvar_context": result.get("clinvar_context", []),
                 "population_observation": result.get("population_observation"),
                 "reasoning_mode": result.get("reasoning_mode", "rule_based"),
+                "report_mode": report_mode,
                 "ir_metadata": evidence.get("ir_metadata", {}),
             },
         )
