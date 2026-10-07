@@ -125,6 +125,7 @@
      this page a reader might copy. Wrapping the whole example onto two lines
      costs less than mangling it, so the buttons stay full width. */
   .examples{margin-top:16px;display:grid;gap:8px;grid-template-columns:1fr;}
+  .examples[hidden], .examples-toggle[hidden]{display:none !important;}
   .ex-btn{
     display:block;width:100%;text-align:left;background:transparent;
     border:1px solid var(--line);
@@ -133,6 +134,10 @@
     transition:border-color .12s, color .12s, background .12s;
   }
   .ex-btn:hover{border-color:var(--accent);color:var(--ink);background:rgba(63,95,154,.03);}
+  .examples-toggle{margin-top:12px;width:100%;padding:8px 10px;text-align:left;
+    background:transparent;border:1px dashed var(--line);border-radius:4px;
+    color:var(--accent);cursor:pointer;font:inherit;font-size:11.5px;}
+  .examples-toggle:hover{border-color:var(--accent);background:rgba(63,95,154,.04);}
 
   #submitBtn{
     margin-top:16px;width:100%;background:var(--accent);color:var(--accent-ink);border:none;
@@ -141,6 +146,36 @@
   }
   #submitBtn:hover{opacity:.92;box-shadow:0 8px 20px -10px rgba(63,95,154,.65);}
   #submitBtn:disabled{opacity:.5;cursor:default;}
+
+  .followup-panel{margin-top:14px;padding:12px;border:1px solid var(--line);
+    border-radius:5px;background:rgba(63,95,154,.035);}
+  .followup-label{font-size:11px;font-weight:800;color:var(--ink);
+    margin-bottom:8px;}
+  .followup-actions{display:grid;gap:6px;}
+  .followup-btn{width:100%;padding:7px 9px;text-align:left;background:#fff;
+    border:1px solid var(--line);border-radius:4px;color:var(--ink-soft);
+    cursor:pointer;font:inherit;font-size:11.5px;line-height:1.35;}
+  .followup-btn:hover{border-color:var(--accent);color:var(--accent);
+    background:rgba(63,95,154,.04);}
+  .followup-btn:disabled{cursor:not-allowed;opacity:.55;border-color:var(--line);
+    color:var(--ink-muted);background:var(--paper);}
+
+  .back-to-top{position:fixed;right:24px;bottom:24px;z-index:70;width:42px;height:42px;
+    border:1px solid var(--line);border-radius:50%;background:var(--panel);
+    color:var(--accent);font-size:22px;line-height:1;cursor:pointer;
+    box-shadow:0 5px 18px rgba(25,35,55,.16);opacity:0;pointer-events:none;
+    transform:translateY(8px);transition:opacity .18s,transform .18s;}
+  .back-to-top.visible{opacity:1;pointer-events:auto;transform:none;}
+  .back-to-top:hover{background:var(--accent);color:var(--accent-ink);}
+
+  .focused-evidence-panel{margin:16px 0;border:1px solid var(--accent);
+    border-left-width:5px;border-radius:6px;padding:16px 18px;background:#f7f9fd;}
+  .focused-evidence-panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--accent);}
+  .focused-evidence-panel .focus-answer{font-size:18px;font-weight:800;
+    color:var(--ink);margin-bottom:8px;}
+  .focused-evidence-panel .focus-note{margin-top:10px;color:var(--ink-soft);
+    font-size:12.5px;line-height:1.55;}
 
   /* Was 30px either side of the rule, which pushed the disclaimer off the
      bottom of a laptop viewport on its own. */

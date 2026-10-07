@@ -306,6 +306,7 @@ class ClassificationAgent:
                 "computational_annotations": [],
                 "clinvar_context": [],
                 "population_observation": None,
+                "review_required": False,
                 "reasoning": "No matching record found in the evidence database.",
                 "responsible_ai": {
                     "clinical_disclaimer": (
@@ -463,6 +464,7 @@ class ClassificationAgent:
             "computational_annotations": computational_annotations,
             "clinvar_context": clinvar_context,
             "population_observation": population_observation,
+            "review_required": False,
             "reasoning": vus_reasoning,
             "confidence_components": confidence_info["components"],
             "responsible_ai": {
@@ -776,6 +778,12 @@ class ClassificationAgent:
         stars = self._review_stars(evidence.get("prior_review_stars"))
         evidence_based = result.get("classification")
         consensus_call = self._consensus_call(prior)
+
+        # Guarantee the human-review flag is present and False by default on every
+        # path. It is only ever set True below, so without this the key would be
+        # absent on agreement / no-consensus cases and a consumer reading it with
+        # .get() would receive None instead of a boolean.
+        result.setdefault("review_required", False)
 
         block = {
             "clinvar_classification": prior,

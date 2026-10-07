@@ -90,6 +90,46 @@ EXAMPLES.forEach(({ label, q }) => {
 });
 
 let latestResult = null;
+let analysisInFlight = false;
+
+function setAnalysisBusy(busy){
+  analysisInFlight = busy;
+  const submit = document.getElementById('submitBtn');
+  if (submit) submit.disabled = busy || !hasSession();
+  document.querySelectorAll('#followupPanel .followup-btn').forEach((button) => {
+    button.disabled = busy;
+    button.setAttribute('aria-disabled', String(busy));
+  });
+}
+
+function setWorkspaceExamplesVisible(visible){
+  const examples = document.getElementById('examples');
+  const toggle = document.getElementById('examplesToggle');
+  if (examples) examples.hidden = !visible;
+  if (toggle) toggle.hidden = visible;
+}
+
+function toggleWorkspaceExamples(){
+  const examples = document.getElementById('examples');
+  const toggle = document.getElementById('examplesToggle');
+  if (!examples || !toggle) return;
+  examples.hidden = !examples.hidden;
+  toggle.textContent = examples.hidden ? 'Browse example queries' : 'Hide example queries';
+  if (!examples.hidden) examples.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function updateBackToTop(){
+  const button = document.getElementById('backToTop');
+  if (!button) return;
+  const inLongPage = currentView === 'landing' || currentView === 'workspace';
+  button.classList.toggle('visible', inLongPage && window.scrollY > 320);
+}
+
+function scrollToTop(){
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+window.addEventListener('scroll', updateBackToTop, { passive: true });
 
 // ---- Session (JWT bearer auth) -------------------------------------
 // The token is held in localStorage and sent as Authorization: Bearer.
@@ -511,6 +551,7 @@ function showView(name, opts){
     }
   }
   currentView = name;
+  updateBackToTop();
   VIEWS.forEach(v => {
     const el = document.getElementById('view' + v.charAt(0).toUpperCase() + v.slice(1));
     if (el) el.classList.toggle('hidden', v !== name);
@@ -1114,6 +1155,8 @@ function logout(){
       renderSession(null);
       closeAuth();
       latestResult = null;
+      setAnalysisBusy(false);
+      setWorkspaceExamplesVisible(true);
       document.getElementById('results').style.display = 'none';
       document.getElementById('empty').style.display = 'block';
       showView('landing');
@@ -2294,6 +2337,7 @@ function copyReport(){
 async function classifyVariant(){
   const query = document.getElementById('query').value.trim();
   if (!query){ return; }
+  if (analysisInFlight){ return; }
   if (!hasSession()){
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = 'Sign in to run a variant analysis.';
@@ -2304,7 +2348,8 @@ async function classifyVariant(){
   document.getElementById('results').style.display = 'none';
   document.getElementById('error').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
-  document.getElementById('submitBtn').disabled = true;
+  setWorkspaceExamplesVisible(false);
+  setAnalysisBusy(true);
 
   // The stages of the real pipeline, in order. Telling the user which agent is
   // working is the difference between a spinner and a system that is visibly
@@ -2322,12 +2367,25 @@ async function classifyVariant(){
   const timer = setInterval(() => { mi = (mi+1) % msgs.length; msgEl.textContent = msgs[mi]; }, 900);
 
   try {
+    // Resolve short follow-up questions against the last displayed variant.
+    // The API remains stateless: the variant context is made explicit before
+    // the request is sent, so every run is independently auditable.
+    let submittedQuery = query;
+    const hasVariantReference = /\b(?:BRCA\s*[12]|NC_\d+\.\d+|(?:NM|NR)_\d+\.\d+|rs\d+|[cg]\.)\b/i.test(query);
+    const isFollowUp = /\b(?:its|this|that|the variant|population|frequency|protein|consequence|impact|clinvar|submitters?|common|rare)\b/i.test(query);
+    const prior = latestResult?.extracted_entities;
+    const priorIdentity = prior?.hgvs || prior?.rsid || (
+      prior?.position ? `position ${prior.position}` : ''
+    );
+    if (!hasVariantReference && isFollowUp && priorIdentity) {
+      submittedQuery = `${prior.gene || ''} ${priorIdentity} ${query}`.trim();
+    }
     // JWT bearer auth: the token identifies the account whose plan and quota
     // gate this run. The agent layer still applies its own API-key check.
     const response = await authFetch('/api/classify', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: submittedQuery })
     });
     const data = await response.json().catch(() => ({}));
     if (response.status === 429){
@@ -2343,12 +2401,13 @@ async function classifyVariant(){
     // the result is already on screen and a progress bar would be noise.
     refreshSession({ silent: true });
   } catch (err) {
+    if (!latestResult) setWorkspaceExamplesVisible(true);
     document.getElementById('error').style.display = 'block';
     document.getElementById('error').textContent = err.message || 'Something went wrong.';
   } finally {
     clearInterval(timer);
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('submitBtn').disabled = false;
+    setAnalysisBusy(false);
   }
 }
 
@@ -2685,6 +2744,24 @@ function renderConfidence(data){
     tags.push('<span class="cb-tag warn">Missing predictor data &minus;'
       + escapeHtml(String(penalty)) + ' points</span>');
   }
+  const consistency = String(comps.clinvar_consistency || '');
+  const consistencyPoints = consistency.indexOf('conflict') !== -1 ? -20 : 10;
+  tags.push('<span class="cb-tag">Submitter consistency '
+    + (consistencyPoints > 0 ? '+' : '') + consistencyPoints + ' points</span>');
+  if (comps.allele_frequency_points !== undefined){
+    tags.push('<span class="cb-tag">Allele-frequency evidence '
+      + escapeHtml(fmtNum(comps.allele_frequency_points, 1)) + '/10</span>');
+  }
+  if (data.confidence_source === 'clinvar_consensus'
+      && data.consensus_confidence_numeric != null){
+    tags.push('<span class="cb-tag">Consensus confidence '
+      + escapeHtml(fmtNum(data.consensus_confidence_numeric, 1)) + '/100</span>');
+  }
+  const retrieval = data.exact_match === true ? 'exact variant match'
+    : (data.consensus && data.consensus.final_from === 'clinvar_consensus'
+      ? 'reviewed ClinVar consensus' : 'retrieval not exact/review-backed');
+  tags.push('<span class="cb-tag' + (retrieval === 'retrieval not exact/review-backed' ? ' warn' : '')
+    + '">Evidence anchor: ' + escapeHtml(retrieval) + '</span>');
 
   const ver = (data.agentic && data.agentic.verification) || null;
   const justified = ver
@@ -2728,11 +2805,13 @@ function renderConfidence(data){
     + '</div>'
     + '<div class="cb-comps">'
     + (comps.evidence_strength === undefined ? ''
-        : cbBar('Evidence strength', comps.evidence_strength, 40))
+        : cbBar('Rule evidence', comps.evidence_strength, 30))
+    + (comps.retrieval_quality === undefined ? ''
+        : cbBar('Retrieval quality', comps.retrieval_quality, 20))
     + (comps.supporting_records === undefined ? ''
-        : cbBar('Supporting records', comps.supporting_records, 20))
+        : cbBar('Record coverage', comps.supporting_records, 7))
     + (!predictorKey ? ''
-        : cbBar('Predictor agreement', PREDICTOR_POINTS[predictorKey] || 0, 20))
+        : cbBar('Predictor evidence', comps.predictor_score || 0, 20))
     + (tags.length ? '<div class="cb-tags">' + tags.join('') + '</div>' : '')
     + '</div></div>'
     + '<p class="cb-note">' + note + '</p>';
@@ -2848,8 +2927,61 @@ function rerunHistory(index){
   classifyVariant();
 }
 
+function renderFocusedEvidence(data){
+  const panel = document.getElementById('focusedEvidencePanel');
+  if (!panel) return;
+  const labels = {
+    population_frequency: 'Population frequency',
+    protein_impact: 'Protein and functional impact',
+    variant_consequence: 'Variant consequence',
+    prior_classifications: 'Prior classifications and expert agreement',
+  };
+  const intent = data.intent;
+  const record = (data.top_k_results || [])[0] || {};
+  if (!labels[intent] || data.is_gene_overview || !record) {
+    panel.style.display = 'none';
+    return;
+  }
+  const value = (key) => record[key] == null || record[key] === ''
+    ? 'Not available in the indexed evidence' : String(record[key]);
+  let answer = '';
+  if (intent === 'population_frequency') {
+    const frequencies = ['af_esp', 'af_exac', 'af_tgp', 'af_gnomad']
+      .map((key) => Number(record[key]))
+      .filter(Number.isFinite);
+    answer = 'Maximum observed allele frequency: ' +
+      (frequencies.length ? Math.max(...frequencies) : 'Not available in the indexed evidence');
+  } else if (intent === 'protein_impact') {
+    answer = `SIFT: ${value('sift_prediction')} · PolyPhen: ${value('polyphen_prediction')} · CADD: ${value('cadd_score')}`;
+  } else if (intent === 'variant_consequence') {
+    answer = `Consequence: ${value('consequence')} · Type: ${value('variant_type')} · Impact: ${value('impact')}`;
+  } else {
+    answer = `ClinVar: ${value('prior_classification')} · Review: ${value('prior_review_status')} · Submitters: ` +
+      (_isDirectionalConflict(record) ? 'directional disagreement recorded' : 'no directional conflict recorded');
+  }
+  panel.innerHTML = '<h3>' + labels[intent] + '</h3>'
+    + '<div class="focus-answer">' + escapeHtml(answer) + '</div>'
+    + '<div class="focus-note">This answers the requested evidence question. '
+    + 'The complete classification, confidence score, criteria, retrieval results, '
+    + 'and audit trail are shown below.</div>';
+  panel.style.display = 'block';
+}
+
+function _isDirectionalConflict(record){
+  return String(record.prior_classification || '').toLowerCase() === 'conflicting' ||
+    Number(record.conflicting_classification_flag) === 1;
+}
+
 function renderResult(data){
   document.getElementById('results').style.display = 'block';
+  setWorkspaceExamplesVisible(false);
+  const followupPanel = document.getElementById('followupPanel');
+  const entities = data.extracted_entities || {};
+  if (followupPanel) {
+    followupPanel.hidden = !(
+      entities.hgvs || entities.rsid || entities.position
+    );
+  }
   renderAgentic(data);
   renderConfidence(data);
 
@@ -2860,7 +2992,8 @@ function renderResult(data){
   // sent the call back. The detail is in the control-plane panel below.
   const agentics = data.agentic || {};
   document.getElementById('repMode').textContent =
-    'Reasoning: ' + (data.reasoning_mode === 'llm' ? 'LLM-assisted' : 'Rule-based')
+    'Classification: ' + (data.reasoning_mode === 'llm' ? 'LLM-assisted' : 'Rule-based')
+    + ' · Report: ' + (data.report_mode === 'llm_explanation' ? 'LLM explanation' : 'Rule-based')
     + (agentics.plan ? ' · ' + agentics.plan.retrieval_mode + ' retrieval' : '')
     + (agentics.revision_rounds ? ' · self-corrected once' : '');
 
@@ -2869,8 +3002,14 @@ function renderResult(data){
   const caveatBanner = document.getElementById('caveatBanner');
   const caveats = [];
   if (data.review_required){
-    caveats.push('<b>Human review required.</b> The evidence-based call disagrees with the ClinVar reviewed consensus, so a qualified reviewer should confirm the final classification.');
+    const consensus = data.consensus || {};
+    if (consensus.final_from === 'clinvar_consensus' && data.coverage_fallback){
+      caveats.push('<b>Human review required.</b> The final classification follows the reviewed ClinVar consensus because this variant is outside the study workbook and independent functional evidence is unavailable.');
+    } else {
+      caveats.push('<b>Human review required.</b> The evidence-based call disagrees with the ClinVar reviewed consensus, so a qualified reviewer should confirm the final classification.');
+    }
   }
+
   if (data.coverage_fallback){
     caveats.push('<b>Reduced evidence coverage.</b> ' + escapeHtml(data.evidence_limitation ||
       'This variant was resolved from the ClinVar coverage index rather than the study workbook, so functional predictors and allele frequencies may be unavailable.'));
@@ -2885,6 +3024,7 @@ function renderResult(data){
   } else {
     caveatBanner.style.display = 'none';
   }
+  renderFocusedEvidence(data);
 
   const isGeneOverview = !!data.is_gene_overview;
   const banner = document.getElementById('geneOverviewBanner');
@@ -2942,6 +3082,7 @@ function renderResult(data){
       basisEl.innerHTML = '<div><b>Basis of final call:</b> evidence-based ' +
         'ACMG-style reasoning.</div>';
     }
+
     loadReviewIntoForm(data.review_signoff);
   }
 
@@ -2960,15 +3101,21 @@ function renderResult(data){
   evGrid.innerHTML = '';
   const top = (data.top_k_results && data.top_k_results[0]) || {};
   const evFacts = [
-    ['Consequence', top.impact ? top.impact : '—'],
+    ['Consequence', top.consequence],
+    ['Variant type', top.variant_type],
+    ['Predicted impact', top.impact],
     ['SIFT', top.sift_prediction],
     ['PolyPhen', top.polyphen_prediction],
     ['CADD score', top.cadd_score],
   ];
   evFacts.forEach(([k,v]) => {
-    evGrid.innerHTML += '<div class="fact"><div class="fact-k">'+k+'</div><div class="fact-v">'+escapeHtml(v)+'</div></div>';
+    if (v == null || v === '' || String(v).toLowerCase() === 'nan') return;
+    const shown = v;
+    evGrid.innerHTML += '<div class="fact"><div class="fact-k">'+k+'</div><div class="fact-v">'+escapeHtml(shown)+'</div></div>';
   });
-  if (top.conflicting_classification_flag){
+  const hasDirectionalConflict = String(top.prior_classification || '').toLowerCase() === 'conflicting'
+    || (!top.prior_classification && top.conflicting_classification_flag);
+  if (hasDirectionalConflict){
     evGrid.innerHTML += '<div class="fact"><div class="fact-k">Submitter agreement</div><div class="fact-v flag">Disagreement on record</div></div>';
   }
 
@@ -3069,6 +3216,15 @@ function renderResult(data){
 // Six agents the visitor can pick apart instead of six paragraphs to skim. The
 // copy here is deliberately the mechanism, not the marketing: what each agent
 // takes in, what it hands on, and which of the two is allowed to send work back.
+function askFollowUp(question){
+  if (analysisInFlight) return;
+  const box = document.getElementById('query');
+  const entities = latestResult?.extracted_entities || {};
+  if (!box || !(entities.hgvs || entities.rsid || entities.position)) return;
+  box.value = question;
+  classifyVariant();
+}
+
 const FLOW_STEPS = [
   {
     name: 'Intake',

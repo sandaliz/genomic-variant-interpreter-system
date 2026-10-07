@@ -20,7 +20,7 @@ This is a genuine Information Retrieval system with:
      - Gene match
      - Genomic position match
      - rsID match
-     - TF-IDF cosine similarity over variant text
+     - Lexical text search over variant descriptions
 
   3. **Relevance Ranking** -- candidates are scored and ranked using a
      weighted combination of:
@@ -28,13 +28,24 @@ This is a genuine Information Retrieval system with:
      - Gene relevance
      - Clinical significance / review status
      - Evidence field completeness
-     - TF-IDF cosine similarity
+     - A lexical similarity term, from whichever ranker is active
 
-  4. **Top-K Selection** -- the top K most relevant evidence records are
+  4. **Lexical rankers** -- the text term in that score comes from one of three
+     interchangeable models (retrieval/, selected with the VL_RANKER env var or
+     the ``ranker`` argument):
+     - "tfidf"  -- TF-IDF cosine similarity (the default, and the long-standing
+       behaviour)
+     - "bm25"   -- BM25 (Okapi) over the same text field
+     - "hybrid" -- Reciprocal Rank Fusion of the two rankings
+     The default is unchanged so the living pipeline is not silently re-scored;
+     the comparison between them is an offline evaluation result
+     (evaluation.py --rankers), not a claim about this code path.
+
+  5. **Top-K Selection** -- the top K most relevant evidence records are
      returned (default K=5), along with their relevance scores and
      human-readable explanations of *why* each score was assigned.
 
-  5. **Explainability** -- every top-K result includes a normalized
+  6. **Explainability** -- every top-K result includes a normalized
      relevance score (0-1), a match type label ("Exact variant match",
      "Same genomic position", etc.), and a short explanation string so the
      Classification Agent (and the end user) can understand *why* each
@@ -59,6 +70,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from protocol.message import AgentMessage, MessageType
 from protocol.security import InvalidVariantQuery
+from retrieval.bm25 import BM25Index
+from retrieval.fusion import rank_from_scores, reciprocal_rank_fusion
 
 # Try to import scikit-learn for TF-IDF; fall back to a simple term-frequency
 # scorer if scikit-learn is not available.
@@ -69,6 +82,16 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
+# The lexical rankers this agent can score with. "tfidf" is the default: it is
+# what every existing result was produced with, so it stays the behaviour of
+# record until something is measured to be better.
+RANKERS = ("tfidf", "bm25", "hybrid")
+
+# The lexical term is worth up to this many points in the weighted score, for
+# every ranker. Keeping one slot means the theoretical maximum stays 34 and a
+# ranker change cannot move the relevance scale out from under a saved result.
+LEXICAL_WEIGHT = 5.0
+
 
 def _normalise_hgvs(text) -> str:
     """Lowercase an HGVS string and drop a trailing indel nucleotide.
@@ -77,6 +100,11 @@ def _normalise_hgvs(text) -> str:
     user query of "c.5946delT" has to be compared against ClinVar's stored
     "c.5946del" (appearing inside e.g.
     "NM_000059.4(BRCA2):c.5946del (p.Ser1982fs)").
+
+    A leading gene/transcript prefix ("BRCA2:c.5946delT") is stripped first:
+    the fallback index stores transcript-prefixed forms
+    ("nm_000059.4(brca2):c.5946del"), so a gene-prefixed needle would never be
+    a substring of a transcript-prefixed row and the lookup would miss.
     """
     if text is None:
         return ""
@@ -86,6 +114,14 @@ def _normalise_hgvs(text) -> str:
     except (TypeError, ValueError):
         pass
     value = str(text).strip().lower()
+    # Strip a leading "gene:" token ("brca2:c.5946delt" -> "c.5946delt").
+    # Transcript prefixes ("nm_...:c....") are kept: they also appear in the
+    # indexed rows, so they narrow rather than break the match.
+    gene_token, sep, rest = value.partition(":")
+    if sep and re.fullmatch(r"[a-z][a-z0-9]*", gene_token) and (
+        rest.startswith("c.") or rest.startswith("g.")
+    ):
+        value = rest
     return re.sub(r"(del|ins)([acgt])$", r"\1", value)
 
 
@@ -111,16 +147,28 @@ class EvidenceRetrievalAgent:
     # Maximum number of evidence records returned in the top_k_results list
     MAX_TOP_K = 10
 
-    def __init__(self, dataset_path: str, top_k: int = DEFAULT_TOP_K, use_cache: bool = True, lazy_load: bool = True):
+    def __init__(self, dataset_path: str, top_k: int = DEFAULT_TOP_K, use_cache: bool = True, lazy_load: bool = True,
+                 ranker: str = None):
         self.dataset_path = dataset_path
         self.top_k = min(top_k, self.MAX_TOP_K)
         self.use_cache = use_cache
         self.lazy_load = lazy_load
-        
+
+        # Which lexical model supplies the text-similarity term. Explicit
+        # argument wins; otherwise VL_RANKER; otherwise TF-IDF, which is what
+        # every result before this existed was produced with.
+        chosen = (ranker or os.environ.get("VL_RANKER") or "tfidf").strip().lower()
+        if chosen not in RANKERS:
+            raise ValueError(
+                f"ranker must be one of {', '.join(RANKERS)}; got {chosen!r}"
+            )
+        self.ranker = chosen
+
         # Lazy loading: only initialize data when first needed
         self._df = None
         self._vectorizer = None
         self._tfidf_matrix = None
+        self._bm25_index = None
         self._initialized = False
         # Lazily-loaded BRCA index built from ClinVar's variant_summary.txt.gz
         # (see scripts/build_variant_summary_index.py). None = not loaded yet;
@@ -320,6 +368,123 @@ class EvidenceRetrievalAgent:
         return result
 
     # ------------------------------------------------------------------
+    # BM25 (alternative lexical ranker)
+    # ------------------------------------------------------------------
+    @property
+    def bm25_index(self) -> BM25Index:
+        """
+        The BM25 index over the same ``search_text`` field TF-IDF indexes.
+
+        Built on first use from the already-loaded DataFrame -- the corpus is
+        3,009 short documents, so indexing it costs less than the round trip
+        that would be needed to cache it, and building it lazily means the
+        default (TF-IDF) path never pays for it at all.
+        """
+        if self._bm25_index is None:
+            self._bm25_index = BM25Index(self.df["search_text"].fillna("").tolist())
+        return self._bm25_index
+
+    def _bm25_search(self, query: str, top_k: int = 20) -> pd.DataFrame:
+        """
+        BM25 search over the variant text corpus.
+
+        Mirrors _tfidf_search's contract exactly -- same input, same shape of
+        output, same column naming convention -- so the two are interchangeable
+        wherever candidates are generated.
+        """
+        if self.df.empty or "search_text" not in self.df.columns:
+            return pd.DataFrame()
+
+        scores = np.asarray(self.bm25_index.score(query), dtype=float)
+        if scores.size != len(self.df):
+            return pd.DataFrame()
+
+        top_k = max(1, min(int(top_k), len(scores)))
+        # Sorted descending, then by row position so a corpus of identical
+        # documents gives a stable ranking rather than an argsort accident.
+        top_indices = np.lexsort((np.arange(len(scores)), -scores))[:top_k]
+        result = self.df.iloc[top_indices].copy()
+        result["bm25_score"] = scores[top_indices]
+        return result
+
+    def _lexical_search(self, query: str, top_k: int = 20) -> pd.DataFrame:
+        """
+        Candidate generation by text similarity, under the active ranker.
+
+        "hybrid" retrieves by both models and keeps the union, ordered by
+        Reciprocal Rank Fusion. RRF is rank-based, so it never has to compare a
+        bounded cosine with an unbounded BM25 -- see retrieval/fusion.py.
+        """
+        if self.ranker == "bm25":
+            return self._bm25_search(query, top_k)
+        if self.ranker != "hybrid":
+            return self._tfidf_search(query, top_k)
+
+        tfidf = self._tfidf_search(query, top_k)
+        bm25 = self._bm25_search(query, top_k)
+        if tfidf.empty:
+            return bm25
+        if bm25.empty:
+            return tfidf
+
+        # Row positions are unique within each frame, so the fused ids can
+        # address both frames at once: TF-IDF rows keep their position and BM25
+        # rows are offset past them.
+        offset = len(tfidf)
+        fused = reciprocal_rank_fusion([
+            list(range(offset)),
+            [offset + i for i in range(len(bm25))],
+        ])
+        merged = pd.concat([tfidf, bm25], ignore_index=True)
+        keep = rank_from_scores(fused)[:top_k]
+        result = merged.iloc[keep].copy()
+        result["rrf_score"] = [fused[position] for position in keep]
+        # A variant both models retrieved appears twice in the union; its best
+        # rank is the one that counts.
+        if "lookup_key" in result.columns:
+            result = result.drop_duplicates(subset=["lookup_key"], keep="first")
+        return result.reset_index(drop=True)
+
+    def _lexical_signal(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        The lexical term of the weighted score, as an array in [0, 1].
+
+        TF-IDF keeps its raw cosine: it is already bounded in [0, 1], so it
+        needs no rescaling and the existing relevance numbers are unchanged.
+        BM25 and RRF are not bounded -- BM25 in particular scales with corpus
+        size and query length -- so they are divided by their maximum within
+        the candidate batch before entering the same 0-5 slot.
+
+        Max-normalisation, not min-max, deliberately. Min-max maps the worst
+        candidate to 0 and the best to 1 whether or not either is any good, so
+        a batch of uniformly weak matches would still present one of them as a
+        perfect lexical hit. Dividing by the maximum keeps a weak batch weak,
+        which is the same reasoning the relevance normalisation below uses.
+        """
+        if self.ranker == "tfidf" and "tfidf_score" in df.columns:
+            return df["tfidf_score"].fillna(0).to_numpy(dtype=float)
+
+        column = {"bm25": "bm25_score", "hybrid": "rrf_score"}.get(
+            self.ranker, "tfidf_score")
+        if column not in df.columns:
+            # The fallback scorer (no scikit-learn) or a frame that never went
+            # through a lexical search: no text signal to add.
+            return np.zeros(len(df))
+        values = df[column].fillna(0).to_numpy(dtype=float)
+        peak = float(values.max()) if values.size else 0.0
+        if peak <= 0:
+            return np.zeros(len(df))
+        return values / peak
+
+    def _lexical_label(self) -> str:
+        """How the active ranker should be named in explanations and metadata."""
+        return {
+            "tfidf": "TF-IDF cosine similarity",
+            "bm25": "BM25",
+            "hybrid": "TF-IDF + BM25 (reciprocal rank fusion)",
+        }[self.ranker]
+
+    # ------------------------------------------------------------------
     # ClinVar variant_summary coverage fallback
     # ------------------------------------------------------------------
     def _load_variant_summary(self) -> pd.DataFrame:
@@ -448,7 +613,7 @@ class EvidenceRetrievalAgent:
           - impact_bonus:       +2 for HIGH impact (more clinically relevant)
           - conflict_penalty:   -2 if submitters disagreed (less certain)
           - completeness:       +1 per non-null evidence field (0-5)
-          - tfidf_score:        TF-IDF cosine similarity (0-1, scaled to 0-5)
+          - lexical_similarity: the active ranker's text score, scaled to 0-5
           - review_status_bonus: +2 for variants with ClinVar review data
 
         After computing raw scores, we:
@@ -487,11 +652,14 @@ class EvidenceRetrievalAgent:
             match_type = "Exact variant match" if is_exact else (
                 "Same genomic position" if position and str(row.get("POS", "")) == str(position)
                 else "Same gene" if gene and str(row.get("Gene", "")) == gene
-                else "TF-IDF text similarity"
+                else self._lexical_label()
             )
 
             # Build explanation
-            tfidf_val = float(row.get("tfidf_score", 0)) if "tfidf_score" in df.columns else 0
+            lexical_label = self._lexical_label()
+            lexical_col = {"tfidf": "tfidf_score", "bm25": "bm25_score",
+                           "hybrid": "rrf_score"}[self.ranker]
+            lexical_val = float(row.get(lexical_col, 0)) if lexical_col in df.columns else 0
             reason_parts = []
             if is_exact:
                 reason_parts.append("HGVS notation exactly matches the query")
@@ -499,8 +667,8 @@ class EvidenceRetrievalAgent:
                 reason_parts.append(f"gene {gene}")
             if position and str(row.get("POS", "")) == str(position):
                 reason_parts.append(f"genomic position {position}")
-            if tfidf_val > 0:
-                reason_parts.append(f"TF-IDF cosine similarity: {tfidf_val:.3f}")
+            if lexical_val > 0:
+                reason_parts.append(f"{lexical_label}: {lexical_val:.3f}")
             impact = self._clean_value(row.get("IMPACT"))
             if impact:
                 reason_parts.append(f"impact={impact}")
@@ -554,9 +722,8 @@ class EvidenceRetrievalAgent:
             non_null = df[field].notna()
             scores[non_null.values] += 1.0
 
-        # TF-IDF score (scaled to 0-5)
-        if "tfidf_score" in df.columns:
-            scores += df["tfidf_score"].fillna(0).values * 5.0
+        # Lexical similarity from the active ranker, in the shared 0-5 slot.
+        scores += self._lexical_signal(df) * LEXICAL_WEIGHT
 
         # Review status bonus (variants with ClinVar review data are more trustworthy)
         # The dataset has Disease_name as a proxy for having review data
@@ -649,7 +816,10 @@ class EvidenceRetrievalAgent:
         rsid = intake_payload.get("rsid")
         raw_query = intake_payload.get("raw_query", "")
 
-        evidence = {"found": False, "query_type": query_type}
+        # Declared up front so `coverage_fallback` is ALWAYS a boolean in the payload.
+        # Otherwise it is only set on the record-found path, so a consumer reading
+        # it with .get() would receive None instead of False on not-found results.
+        evidence = {"found": False, "query_type": query_type, "coverage_fallback": False}
 
         # --- CANDIDATE RETRIEVAL ---
         candidates = pd.DataFrame()
@@ -661,11 +831,11 @@ class EvidenceRetrievalAgent:
             # Exact variant lookup first
             candidates = self._exact_match(gene, hgvs)
             if candidates.empty:
-                # Fall back to gene-level + TF-IDF
+                # Fall back to gene-level + lexical text search
                 candidates = self._gene_match(gene)
-                tfidf = self._tfidf_search(raw_query)
-                if not tfidf.empty:
-                    candidates = pd.concat([candidates, tfidf]).drop_duplicates(
+                text_hits = self._lexical_search(raw_query)
+                if not text_hits.empty:
+                    candidates = pd.concat([candidates, text_hits]).drop_duplicates(
                         subset=["Gene", "HGVS_notation"]
                     )
             else:
@@ -687,7 +857,7 @@ class EvidenceRetrievalAgent:
         elif query_type == "variant_only":
             candidates = self._exact_match(None, hgvs)
             if candidates.empty:
-                candidates = self._tfidf_search(raw_query)
+                candidates = self._lexical_search(raw_query)
 
         elif query_type == "gene_only":
             candidates = self._gene_match(gene)
@@ -695,13 +865,13 @@ class EvidenceRetrievalAgent:
         elif query_type == "position":
             candidates = self._position_match(position)
             if candidates.empty:
-                candidates = self._tfidf_search(raw_query)
+                candidates = self._lexical_search(raw_query)
 
         elif query_type == "rsid":
             candidates = self._rsid_match(rsid)
             rsid_exact = not candidates.empty
             if candidates.empty:
-                candidates = self._tfidf_search(raw_query)
+                candidates = self._lexical_search(raw_query)
 
         elif query_type == "position_only":
             candidates = self._position_match(position)
@@ -711,7 +881,7 @@ class EvidenceRetrievalAgent:
             candidates = self._rsid_match(rsid)
             rsid_exact = not candidates.empty
             if candidates.empty:
-                candidates = self._tfidf_search(raw_query)
+                candidates = self._lexical_search(raw_query)
 
         # --- COVERAGE FALLBACK (ClinVar variant_summary BRCA index) -------
         # The study workbook is a conflicting-classification subset, so a clean
@@ -720,7 +890,13 @@ class EvidenceRetrievalAgent:
         # as *the* answer. Resolve the queried variant from the dedicated BRCA
         # index first; only if that also misses do we keep the fuzzy result.
         from_variant_summary = False
-        if query_type in ("gene_variant", "variant_only", "rsid", "rsid_search"):
+        if query_type in (
+            "gene_variant",
+            "variant_only",
+            "position_only",
+            "rsid",
+            "rsid_search",
+        ):
             have_exact = not candidates.empty and self._primary_is_exact(
                 candidates.iloc[0], gene, hgvs, rsid, position
             )
@@ -816,8 +992,14 @@ class EvidenceRetrievalAgent:
                 "candidates_retrieved": len(candidates),
                 "top_k_returned": len(top_k),
                 "max_possible_top_k": self.top_k,
-                "ranking_method": "weighted relevance scoring (exact match + gene + position + impact + completeness + TF-IDF + review data)",
+                "ranking_method": "weighted relevance scoring (exact match + gene + position + impact + completeness + "
+                                  + self._lexical_label() + " + review data)",
                 "tfidf_enabled": HAS_SKLEARN,
+                # Which lexical model supplied the text term. Recorded per run
+                # because the same query can be answered by a different model
+                # depending on configuration, and a stored result should say
+                # which one produced it.
+                "lexical_ranker": self.ranker,
                 "evidence_source": (
                     "clinvar_variant_summary (coverage fallback; no functional predictors)"
                     if from_variant_summary else "study workbook"
@@ -829,7 +1011,7 @@ class EvidenceRetrievalAgent:
                     "high_impact": 2,
                     "conflict_penalty": -2,
                     "evidence_completeness": "up to 6",
-                    "tfidf_scaled": "0-5",
+                    "lexical_similarity": "0-5",
                     "review_data": 1,
                 },
             }

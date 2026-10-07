@@ -398,3 +398,97 @@ class TestConfidenceConsistency:
         assert reconciled["consensus"]["final_from"] == "evidence_based"
         assert reconciled["confidence_numeric"] == result["confidence_numeric"]
         assert "evidence_based_confidence_numeric" not in reconciled["consensus"]
+
+
+class TestReviewRequiredFlag:
+    # Regression guard: the flag used to be set only on the disagreement
+    # branch, so every other path left the key absent and the API surfaced
+    # None instead of False.
+
+    @staticmethod
+    def _strong_evidence(**overrides):
+        evidence = {
+            "found": True,
+            "impact": "HIGH",
+            "sift_prediction": "deleterious",
+            "polyphen_prediction": "probably_damaging",
+            "cadd_score": 25.0,
+            "af_esp": 0.0,
+            "af_exac": 0.0,
+            "af_tgp": 0.0,
+            "conflicting_classification_flag": 0,
+        }
+        evidence.update(overrides)
+        return evidence
+
+    def test_not_found_path_reports_false(self, classifier):
+        result = classifier.classify_rule_based({"found": False})
+        assert result["review_required"] is False
+
+    def test_rule_based_path_reports_false(self, classifier):
+        result = classifier.classify_rule_based(self._strong_evidence())
+        assert result["review_required"] is False
+
+    def test_agreement_with_consensus_keeps_flag_false(self, classifier):
+        evidence = self._strong_evidence(
+            prior_classification="Likely Pathogenic",
+            prior_review_status="criteria provided, multiple submitters, no conflicts",
+            prior_review_stars=2,
+        )
+        result = classifier.classify_rule_based(evidence)
+        reconciled = classifier.reconcile_with_consensus(result, evidence)
+        assert reconciled["consensus"]["agreement"] is True
+        assert reconciled["review_required"] is False
+
+    def test_no_consensus_label_keeps_flag_false(self, classifier):
+        evidence = self._strong_evidence()
+        result = classifier.classify_rule_based(evidence)
+        reconciled = classifier.reconcile_with_consensus(result, evidence)
+        assert reconciled["consensus"]["agreement"] is None
+        assert reconciled["review_required"] is False
+
+    def test_disagreement_flags_true_on_both_branches(self, classifier):
+        low_star = {
+            "found": True,
+            "impact": "MODERATE",
+            "sift_prediction": "tolerated",
+            "polyphen_prediction": "benign",
+            "cadd_score": 10.0,
+            "af_esp": 0.0,
+            "af_exac": 0.0,
+            "af_tgp": 0.0,
+            "conflicting_classification_flag": 0,
+            "prior_classification": "Pathogenic",
+            "prior_review_status": "no assertion criteria provided",
+            "prior_review_stars": 0,
+        }
+        # Below the deferral bar: the call stands, but must still be flagged.
+        reconciled = classifier.reconcile_with_consensus(
+            classifier.classify_rule_based(low_star), low_star
+        )
+        assert reconciled["consensus"]["agreement"] is False
+        assert reconciled["review_required"] is True
+        assert reconciled["consensus"]["final_from"] == "evidence_based"
+
+        # At or above the deferral bar: the call is overridden, still flagged.
+        high_star = dict(low_star,
+                         prior_review_status="reviewed by expert panel",
+                         prior_review_stars=3)
+        reconciled2 = classifier.reconcile_with_consensus(
+            classifier.classify_rule_based(high_star), high_star
+        )
+        assert reconciled2["review_required"] is True
+        assert reconciled2["consensus"]["final_from"] == "clinvar_consensus"
+
+    def test_classify_pipeline_exposes_boolean_flag(self, classifier, message_log):
+        # The encrypted agent-to-agent path must carry a real boolean too.
+        evidence_msg = AgentMessage(
+            variant_id="BRCA1:NC_000017.10:g.41197778A>G",
+            stage="evidence_retrieved",
+            sender="evidence_retrieval_agent",
+            payload=self._strong_evidence(),
+        )
+        evidence_msg.encrypt_payload()
+        class_msg = classifier.classify(evidence_msg, message_log)
+        payload = class_msg.decrypt_payload()
+        assert payload["review_required"] is False

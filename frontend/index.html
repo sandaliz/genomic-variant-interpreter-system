@@ -594,7 +594,6 @@
         <h5>Account</h5>
         <a href="#" onclick="openAuth('signin');return false;">Sign in</a>
         <a href="#" onclick="openAuth('register');return false;">Create an account</a>
-        <a href="#" onclick="openAuth('forgot');return false;">Reset password</a>
       </div>
       <div class="mega-col hidden" id="footerAccountIn">
         <h5>Account</h5>
@@ -637,8 +636,21 @@
          <kbd>&#8984;</kbd> + <kbd>K</kbd> for commands</p>
 
       <div class="examples" id="examples"></div>
+      <button type="button" class="examples-toggle" id="examplesToggle"
+              onclick="toggleWorkspaceExamples()" hidden>
+        Browse example queries
+      </button>
 
       <button id="submitBtn" onclick="classifyVariant()">Analyze variant</button>
+      <div class="followup-panel" id="followupPanel" hidden>
+        <div class="followup-label">Ask a follow-up about this variant</div>
+        <div class="followup-actions">
+          <button type="button" class="followup-btn" onclick="askFollowUp('Is this variant common in the general population?')">Population frequency</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What is the protein or functional impact of this variant?')">Protein impact</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What is the variant consequence?')">Variant consequence</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What do prior ClinVar submitters and experts say about this variant?')">Prior classifications</button>
+        </div>
+      </div>
 
       <div class="rail-usage" id="railUsage">
         <div class="rail-usage-head">
@@ -699,6 +711,7 @@
 
             <div class="gene-overview-banner" id="geneOverviewBanner" style="display:none;"></div>
             <div class="caveat-banner" id="caveatBanner" style="display:none;"></div>
+            <div class="focused-evidence-panel" id="focusedEvidencePanel" style="display:none;"></div>
 
             <div id="verdictSection">
               <div class="verdict">
@@ -1108,6 +1121,8 @@
      finish in complete silence, so a success was indistinguishable from a click
      that missed. aria-live so it is announced rather than only shown. -->
 <div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
+<button type="button" class="back-to-top" id="backToTop" onclick="scrollToTop()"
+        aria-label="Back to top" title="Back to top">↑</button>
 
 <script src="/static/app.js"></script>
 </body>
