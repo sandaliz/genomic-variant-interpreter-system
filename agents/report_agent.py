@@ -40,7 +40,7 @@ Two report modes:
      output is guided by the system instruction to never overstate confidence.
 
 Security: decrypts the incoming message payload, and encrypts its own
-outgoing payload (encryption in transit between agents).
+outgoing payload (Fernet encryption within the same process).
 """
 
 import sys
@@ -228,7 +228,7 @@ class ReportAgent:
                 max_tokens=200,  # Reduced from 300 for faster response
             )
             return summary.strip()
-        except (RuntimeError, ConnectionError, TimeoutError) as e:
+        except (RuntimeError, ConnectionError, TimeoutError):
             # Fallback to structured summarization for API/Network errors
             return self.summarize_evidence(evidence)
 

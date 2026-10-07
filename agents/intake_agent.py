@@ -36,7 +36,7 @@ NLP approach:
     (intent classification) alongside NER.
 
 Security: outgoing message payload is encrypted before being passed
-to the next agent (encryption in transit).
+to the next agent (Fernet encryption within the same process).
 """
 
 import re
@@ -303,7 +303,7 @@ class IntakeAgent:
                 "raw_query": cleaned,
             },
         )
-        # Encrypt payload before passing to next agent (security: encryption in transit)
+        # Encrypt payload before passing to next agent (security: Fernet within same process)
         message.encrypt_payload()
         message_log.record(message)
         return message

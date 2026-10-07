@@ -706,7 +706,7 @@ there is nowhere for a credential to be baked into by accident:
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 522 tests
+python3 -m pytest tests/ -v      # 645 tests
 ```
 
 | File | Tests | Covers |

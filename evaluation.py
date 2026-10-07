@@ -961,13 +961,6 @@ def run_ablation(dataset_path: str, sample_size: int = 20, use_llm: bool = False
 
         # Gemini only (if enabled)
         if use_llm and classifier.llm.available:
-            from protocol.message import AgentMessage
-            evidence_msg = AgentMessage(
-                variant_id=f"{row['Gene']}:{row['HGVS_notation']}",
-                stage="evidence_retrieved",
-                sender="evaluation",
-                payload=evidence,
-            )
             try:
                 llm_result, used_llm = classifier.classify_with_llm(evidence)
                 llm_pred = llm_result["classification"]
@@ -1019,7 +1012,6 @@ def evaluate(sample_size: int = 100, include_ir: bool = True,
     df = load_ground_truth(dataset_path, sample_size)
     mode = resolve_ground_truth_mode(df, ground_truth_mode)
     classifier = ClassificationAgent(use_llm=not abort_llm)
-    log = MessageLog()
 
     results = []
     for _, row in df.iterrows():

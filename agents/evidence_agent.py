@@ -56,7 +56,7 @@ This makes the Evidence Agent a proper IR module rather than a simple
 top-K selection, and explainable results, which are core IR concepts.
 
 Security: decrypts the incoming message payload, and encrypts its own
-outgoing payload (encryption in transit between agents).
+outgoing payload (Fernet encryption within the same process).
 """
 
 import sys
@@ -1110,7 +1110,7 @@ if __name__ == "__main__":
                 print(f"  -> IR: strategy={meta['retrieval_strategy']}, "
                       f"candidates={meta['candidates_retrieved']}, top_k={meta['top_k_returned']}")
             if "top_k_results" in payload:
-                print(f"  -> Top-K results:")
+                print("  -> Top-K results:")
                 for r in payload["top_k_results"][:5]:
                     print(f"     - [{r['match_type']}] {r['gene']}:{r['hgvs']} "
                           f"(score={r['relevance_score']:.2f}, exact={r['exact_match']})")

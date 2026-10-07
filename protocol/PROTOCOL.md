@@ -39,7 +39,7 @@ Defined as a `@dataclass` in `protocol/message.py`.
 | `trace_id` | `str` | | 12-char UUID | End-to-end ID shared by **every** message in one pipeline run |
 | `message_id` | `str` | | 8-char UUID | Unique ID for this single message |
 | `timestamp` | `str` | | ISO-8601 UTC | Creation time, `datetime.now(timezone.utc).isoformat()` |
-| `encrypted` | `bool` | | `False` | `True` once the payload has been encrypted in transit |
+| `encrypted` | `bool` | | `False` | `True` once the payload has been encrypted with Fernet (AES-128-CBC + HMAC-SHA256) — for the demo, the key is per-process; see `SECURITY.md` |
 | `payload` | `dict` | | `{}` | Structured data (or `{"__encrypted__": "<Fernet token>"}` when encrypted) |
 
 The `variant_id` / `trace_id` pair gives two levels of traceability: *what* was
@@ -97,7 +97,7 @@ trail shows both the original call and the corrected one.
 
 | Guarantee | Mechanism |
 |---|---|
-| **Confidentiality in transit** | Payload JSON is encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) by `MessageEncryptor` in `protocol/security.py` before leaving an agent |
+| **Confidentiality in transit** | Payload JSON is encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) by `MessageEncryptor` in `protocol/security.py` before leaving an agent. For the demo, the key is per-process; the encryption is in-process confidentiality within a single pipeline run. |
 | **Integrity / tamper detection** | Fernet's HMAC — a modified token fails to decrypt (`InvalidToken`) |
 | **Authentication (account)** | JWT bearer token verified by `get_current_user()` (`auth/dependencies.py`) at the API edge, with the account re-read from PostgreSQL on every request; Argon2id password hashing in `auth/security.py` |
 | **Authentication (agent layer)** | API key (SHA-256 hashed) verified by `authenticate()` **before** the Intake Agent runs — retained as defence-in-depth behind the JWT layer |

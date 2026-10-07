@@ -6,8 +6,6 @@ synchronous, so FastAPI runs these in a threadpool instead of blocking
 the event loop.
 """
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -49,7 +49,7 @@ Responsible AI layer (explicit pipeline):
       Clinical disclaimer     (decision-support only, not diagnosis)
 
 Security: decrypts the incoming message payload, and encrypts its own
-outgoing payload (encryption in transit between agents).
+outgoing payload (Fernet encryption within the same process).
 """
 
 import sys
@@ -965,7 +965,7 @@ class ClassificationAgent:
                 trace_id=evidence_message.trace_id,
                 payload=result,
             )
-            # Encrypt outgoing payload (security: encryption in transit)
+            # Encrypt outgoing payload (security: Fernet encryption within the same process)
             message.encrypt_payload()
             message_log.record(message)
             return message

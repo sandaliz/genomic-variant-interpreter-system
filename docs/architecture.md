@@ -112,7 +112,7 @@ flowchart LR
     subgraph sanitised["Validated — protocol/security.py"]
         V["gene whitelist · HGVS shape<br/>prompt-injection patterns"]
     end
-    subgraph internal["Internal — encrypted in transit"]
+    subgraph internal["Internal — message-level encrypted with Fernet"]
         MSG["AgentMessage payloads<br/>Fernet"]
     end
     subgraph external["Third party"]

@@ -1,7 +1,7 @@
 # Genomic Variant Interpretation — Multi-Agent AI System
 
 ## IT3041 — Information Retrieval and Web Analytics
-### Assignment: Design and Implementation of an Agentic AI System
+### Multi-Agent AI System Design and Implementation
 
 ---
 
@@ -385,7 +385,7 @@ Report Agent → AgentMessage(REPORT_RESULT) → Orchestrator
 > 📄 **Full protocol specification:** [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) documents the
 > envelope schema, the message-type vocabulary (including the agentic control messages), the
 > security guarantees on the wire, a complete worked message flow with real JSON, the audit-trail
-> API and the REST transport layer. This is the reference to quote during the viva.
+> API and the REST transport layer.
 >
 > 📄 **MCP transport:** the same agents are also exposed over the **Model Context Protocol** in
 > `mcp_server.py` (`classify_variant`, `retrieve_evidence`, `list_example_queries`), so an MCP
@@ -430,7 +430,7 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Quota enforcement** | `services/entitlement_service.py` | Per-UTC-month usage rows. Pre-flight `check_quota()` returns 429 before the pipeline runs; `record_usage()` re-checks under a PostgreSQL `SELECT … FOR UPDATE` row lock so concurrent requests cannot overshoot. **Every accepted query is charged**, including an exact repeat — the request id is a fresh `uuid4()` per call, so asking the same question twice costs twice. Retry-safety is opt-in via an `idempotency_key` (folded together with the user and the UTC month, so reusing a key next month is a new charge rather than a collision) |
 | **Input sanitization** | Intake Agent | Rejects SQL/script injection, over-length input, empty queries |
 | **Prompt-injection defense** | `protocol/security.py` (`is_prompt_injection`) | Regex blocklist for system-prompt overrides ("ignore previous instructions"), exfiltration ("reveal system prompt"), role-hijack and jailbreak phrasing; enforced in `sanitize_query()` before any NLP/LLM sees the query |
-| **Encryption in transit** | `protocol/message.py` | All agent payloads encrypted with Fernet symmetric encryption |
+| **Encryption in transit** | `protocol/message.py` | All agent payloads encrypted with Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256). Note: the demo key is per-process; encryption is in-process confidentiality, not a managed secret — see `SECURITY.md`. |
 | **Audit logging** | `protocol/message.py` | Every message saved to `MessageLog` with trace IDs |
 | **503 fallback** | `llm/gemini_client.py` + agents | 503/429 across all fallback models → plain `RuntimeError` → rule-based classification + template report (covered by `TestServiceUnavailableCascade`) |
 | **Numpy-safe serialization** | `protocol/message.py` | Custom `NumpyJSONEncoder` handles pandas/numpy types during encryption |
@@ -468,7 +468,7 @@ tests assert they are always real booleans (`tests/test_classification_agent.py`
 | **Transparency** | Both rule-based and LLM modes are auditable; full message trail with trace IDs |
 | **Explainability** | Every report lists evidence + ACMG criteria applied + confidence components |
 | **Accountability** | Full audit trail; every agent's decision can be traced via `trace_id` |
-| **Privacy / data protection** | All messages encrypted in transit with Fernet |
+| **Privacy / data protection** | All messages are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) before being written to the message log. The demo uses a per-process key; production deployments load a managed key from env/secret store. See `SECURITY.md`. |
 | **Confidence never overstated** | LLM prompts instruct to be conservative and the LLM's own confidence value is discarded; a genuine conflict forces low confidence; the categorical label is always derived from the numeric score; a consensus-backed final call is floored by ClinVar review stars with the evidence-only figure disclosed; and the **Verifier Agent audits the assertion itself** — an over-confident call is sent back and re-stated, and the directive can only ever *lower* confidence |
 | **VUS handled honestly** | VUS results are never presented as confident answers; downgraded if LLM says otherwise |
 | **Always a disclaimer** | Every report includes the decision-support disclaimer; confidence ≠ medical certainty explicitly stated |
@@ -779,7 +779,7 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 
 > **Note:** Gemini-only ablation requires a valid Gemini API key. The table above
 > reports the rules-only baseline; both Gemini arms are marked **not run** — they
-> were never executed for this submission, so no LLM accuracy figure is claimed.
+> were not executed in this evaluation, so no LLM accuracy figure is claimed.
 > Runnable on demand:
 > `python evaluation.py --dataset data/clinvar_variant_dataset_enriched.xlsx
 > --ground-truth real --sample-size 30` (without `--no-llm`). At two Gemini Flash
@@ -832,12 +832,11 @@ current total).
 
 In addition to the production evaluation script, the project includes `analysis.ipynb` — a
 **production evaluation and visualisation notebook** that profiles the dataset, evaluates the
-deployed multi-agent pipeline against real ClinVar labels, and generates the figures used in the
-report, video and viva. It contains **no separate machine-learning model**: it measures the
+deployed multi-agent pipeline against real ClinVar labels, and generates figures used to explain
+system behavior. It contains **no separate machine-learning model**: it measures the
 system that ships.
 
-**Purpose:** Complement the production system with research-grade visualizations for presentations
-and assignments.
+**Purpose:** Complement the production system with research-grade visualizations.
 
 **Generated Visualizations (`analysis_results/` directory):**
 - **Data Exploration**: Gene distribution, variant types, impact levels, allele frequencies, CADD scores
@@ -849,12 +848,9 @@ and assignments.
 - **Integration**: The notebook calls `evaluation.py` directly, so its numbers and the CLI
   evaluation cannot drift apart
 
-**Usage for Assignments:**
-- **Week 6 Mid Evaluation**: Visual demonstrations of data understanding, problem relevance, and system architecture
-- **Week 10 Final Submission**: Materials for Gen AI video creation and technical report figures
-- **Viva Defense**: Visual aids to explain system components and performance
-
-**Note:** The production system (`main.py`, `api.py`) is designed for deployment with text-based metrics, while the analysis notebook is designed for research and presentation. Both use the same underlying algorithms and evaluation methodology.
+**Note:** The production system (`main.py`, `api.py`) is designed for deployment with
+text-based metrics, while the analysis notebook is designed for research visualization.
+Both use the same underlying algorithms and evaluation methodology.
 
 ---
 
@@ -1088,14 +1084,14 @@ jupyter notebook analysis.ipynb
 
 ## 13. Conclusion
 
-This project fulfills all assignment requirements:
+This project provides:
 
 1. ✅ **Real-world problem** in Biotechnology (BRCA1/BRCA2 variant classification)
 2. ✅ **4 interacting intelligent agents** (Intake, Evidence, Classification, Report)
 3. ✅ **LLM**: Google Gemini (classification reasoning + report generation)
 4. ✅ **NLP**: Named Entity Recognition (gene, HGVS, position, rsID) + intent classification + structured/abstractive summarization
 5. ✅ **Information Retrieval**: a labelled evidence ladder (exact variant → ClinVar coverage index → same position → same gene → lexical only), with the lexical rung rankable by TF-IDF cosine similarity (scikit-learn `TfidfVectorizer` + `cosine_similarity`), a **hand-rolled Okapi BM25**, or an **RRF hybrid** of the two — plus ranked top-K selection with explainable relevance scores, MRR/nDCG/MAP metrics and a head-to-head ranker comparison (§9.2.1).
-6. ✅ **Security**: two-layer authentication (PostgreSQL accounts with Argon2id + JWE signed-then-encrypted tokens at the API edge, SHA-256 agent-layer API keys as defence-in-depth), **email as the sole login identity** (username is a display handle, never a credential), **HttpOnly session cookies with CSRF double-submit protection** (bearer auth kept for scripted clients), **per-IP and per-account login throttling**, a dedicated **`auth_events` audit table** with hashed identifiers and separate actor/subject, mandatory `iss`/`aud` binding and fail-fast JWT configuration, role-based access control, plan feature gating, monthly quota enforcement where **every accepted query is charged** and retry-safety is opt-in via `idempotency_key`, row-locked commit-time re-checks, input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
+6. ✅ **Security**: two-layer authentication (PostgreSQL accounts with Argon2id + JWE signed-then-encrypted tokens at the API edge, SHA-256 agent-layer API keys as defence-in-depth), **email as the sole login identity** (username is a display handle, never a credential), **HttpOnly session cookies with CSRF double-submit protection** (bearer auth kept for scripted clients), **per-IP and per-account login throttling**, a dedicated **`auth_events` audit table** with hashed identifiers and separate actor/subject, mandatory `iss`/`aud` binding and fail-fast JWT configuration, role-based access control, plan feature gating, monthly quota enforcement where **every accepted query is charged** and retry-safety is opt-in via `idempotency_key`, row-locked commit-time re-checks, input sanitization + explicit prompt-injection defense, Fernet encryption (in-process, per-process key — see SECURITY.md), full audit logging, 503→rules/template fallback
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas

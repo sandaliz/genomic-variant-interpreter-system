@@ -14,7 +14,6 @@ Run:
 
 import os
 import sys
-import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -32,8 +31,7 @@ import csv
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from pydantic import BaseModel, Field
 from typing import Optional
 

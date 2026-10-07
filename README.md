@@ -22,10 +22,6 @@ Built for IT3041 — Information Retrieval and Web Analytics.
 [Data model](docs/data-model.md) ·
 [Security](SECURITY.md) ·
 [Full report](PROJECT_REPORT.md)
-
-<!-- demo video: add the link here once recorded -->
-<!-- [![Demo](thumbnail.png)](https://youtu.be/VIDEO_ID) -->
-
 ---
 
 ## What it does
@@ -121,7 +117,7 @@ Agent 5: Report Agent ---------------- LLM (Gemini) + NLP (summarization) + Resp
 Final report
 ```
 
-All agents communicate exclusively through a **standardized AgentMessage protocol** defined in `protocol/message.py`, which includes: `sender`, `receiver`, `message_type`, `trace_id`, `timestamp`, and an encrypted payload. Every interaction is **encrypted in transit** using Fernet symmetric encryption and logged to `MessageLog` for a full audit trail.
+All agents communicate exclusively through a **standardized AgentMessage protocol** defined in `protocol/message.py`, which includes: `sender`, `receiver`, `message_type`, `trace_id`, `timestamp`, and an encrypted payload. Every interaction is **message-encrypted with Fernet** (AES-128-CBC + HMAC-SHA256) before being written to the shared `MessageLog`, with trace IDs for end-to-end audit. Note: for the academic prototype, the Fernet key is generated per-process — each agent instance decrypts only its own messages. A production deployment would load a shared key from a secret manager. See `SECURITY.md` for the full security policy.
 
 ### Agentic behaviour: planning and self-correction
 
@@ -362,6 +358,9 @@ node --test tests/js/          # frontend JS unit tests
 python3 scripts/smoke_auth.py  # end-to-end check against the real PostgreSQL
 ```
 
+On Windows the interpreter is normally `python` rather than `python3`; read
+`python3 ...` above as `python ...`.
+
 ### 6. Run evaluation
 
 ```bash
@@ -409,7 +408,6 @@ The analysis notebook provides:
   consensus-reconciled results, directional agreement, predictor completeness)
 - Information retrieval performance metrics (Precision@5, Recall@5, Exact-Match@5, MRR@5)
 - Confidence-score distribution (Responsible AI calibration) and system architecture diagram
-- Presentation materials for Week 6 Mid Evaluation and Week 10 Final Submission
 
 Evaluation reports classification accuracy separately for complete and
 incomplete predictor records. Ground truth defaults to the **real ClinVar
@@ -489,9 +487,9 @@ subgroup tables — are in **[PROJECT_REPORT.md](PROJECT_REPORT.md)**. Unit test
 for the arithmetic behind them live in `tests/test_evaluation_metrics.py` and
 `tests/test_retrieval.py`, asserted against hand-computed values.
 
-## Final submission artifacts
+## Documentation
 
-The final submission also includes:
+The project includes:
 
 - `docs/` — the engineering documentation set: [architecture](docs/architecture.md) (component, verification-loop and trust-boundary diagrams), [sequence](docs/sequence.md) (the query and sign-in flows as executed), [data-model](docs/data-model.md) (ER diagram, retention and the migration table) and [retrieval](docs/retrieval.md) (the retrieval ladder, the three lexical rankers and the ranking metrics). All Mermaid, all rendered by GitHub.
 - `SECURITY.md` — the security policy: data inventory, implemented controls with file references, and a deliberately blunt list of ten known limitations.
@@ -561,13 +559,13 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
   another's activity
 - **Prompt-injection defense** — a regex blocklist rejects system-prompt overrides,
   exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
-- **Symmetric encryption** — all agent messages encrypted in transit using Fernet
+- **Symmetric encryption** — all agent messages are encrypted with Fernet before being written to the shared message log. Note: the demo uses a per-process key (see `SECURITY.md`); a production deployment loads a shared key from environment variables.
 - **Full audit logging** with trace IDs for every agent-to-agent message
 - **Secrets stay out of version control** — `.env` is gitignored and
   `.dockerignore` keeps it out of the image build context, so no image layer ever
   contains it. Every deployment sets `DATABASE_URL` and `JWT_SECRET_KEY` in its
   own environment
-- **Encrypted in transit** — the database connection requires TLS (`sslmode=require`)
+- **Encrypted in transit** — the database connection requires TLS (`sslmode=require`); agent-to-agent payloads are encrypted with Fernet before being written to the shared message log (demo uses a per-process key).
 - **Cold-start tolerant** — `pool_pre_ping=True` handles a hosted database that
   scales to zero between requests
 - **Restricted CORS** — allowed origins are explicit (`FRONTEND_ORIGINS`, defaulting to localhost)
@@ -578,7 +576,7 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
 - **Confidence calibration**: a genuine conflict (ClinVar's own `Conflicting` consensus when available, otherwise the dataset flag) forces low confidence; the categorical label is always derived from the numeric score; VUS never presented as confident
 - **Explainability**: every report lists the evidence + ACMG criteria applied
 - **Transparency**: full audit trail with `trace_id` for end-to-end traceability
-- **Data protection**: all messages encrypted in transit
+- **Data protection**: all messages are encrypted with Fernet before being written to the shared message log. The demo uses a per-process key (see `SECURITY.md`); a production deployment loads a shared key from environment variables.
 - **Fairness (explicit limitation)**: every result carries a population-data limitation in its
   machine-readable `responsible_ai` block, rendered in the UI and the PDF:
 
@@ -753,5 +751,4 @@ were owned by the same person, so responsibility was evenly distributed.
 | Nihindu | `tests/test_intake_agent.py`, API/frontend usage docs |
 | Nipuni | `tests/test_llm_resilience.py`, `tests/test_security.py`, protocol specification (`protocol/PROTOCOL.md`) |
 | Sandali | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
-
 

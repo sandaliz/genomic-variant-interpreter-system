@@ -15,7 +15,7 @@ The protocol follows a standardized schema (similar to MCP / A2A standards):
         "variant_id":    e.g. "BRCA1:NC_000017.10:g.41197778A>G"
         "stage":         pipeline stage (intake_complete, evidence_retrieved, ...)
         "timestamp":     ISO-8601 UTC timestamp
-        "encrypted":     whether the payload is encrypted in transit
+        "encrypted":     whether the payload is encrypted (Fernet)
         "payload":       dict with clinical evidence / results (may be encrypted)
     }
 
@@ -25,8 +25,7 @@ travel over MCP or REST between separate processes. Here agents run in
 the same process but STILL communicate only through this protocol, never
 by reaching into each other's internal state directly.
 
-Security: payloads are encrypted in transit between agents using the
-MessageEncryptor from protocol/security.py.
+Security: payloads are encrypted with Fernet before being written to the shared message log. The demo uses a per-process key; production deployments load a shared key from env/secret store (see SECURITY.md).
 """
 
 from dataclasses import dataclass, field, asdict
@@ -102,7 +101,7 @@ class AgentMessage:
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    encrypted: bool = False             # True if payload was encrypted in transit
+    encrypted: bool = False             # True if payload was encrypted (Fernet)
 
     def to_json(self) -> str:
         """Serialize the message (metadata + encrypted payload if any)."""
