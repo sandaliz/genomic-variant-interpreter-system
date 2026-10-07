@@ -303,6 +303,19 @@ Report Agent → AgentMessage(REPORT_RESULT) → Orchestrator
 - `POST /api/classify` **requires** an API key (supplied as an `X-API-Key` header or the `api_key` body field) and returns `401` without one — the frontend sends the demo key explicitly, so authentication is genuinely enforced rather than silently defaulted
 - CORS is restricted to explicit frontend origins (`FRONTEND_ORIGINS`, defaulting to localhost)
 
+**End-to-end field flow.** Two boolean flags are computed inside the agents and carried
+all the way to the API response, so they cannot be silently dropped between layers:
+
+| Flag | Computed in | Meaning |
+|---|---|---|
+| `review_required` | Classification Agent (`reconcile_with_consensus`) | The evidence-based call disagrees with ClinVar's reviewed consensus — a human reviewer must confirm the final classification. Always present; `True` on **both** disagreement branches (defer-to-consensus and call-stands). |
+| `coverage_fallback` | Evidence Agent (`retrieve`) | The variant was resolved from the ClinVar coverage index rather than the study workbook, so functional predictors and allele frequencies may be missing. `evidence_limitation` carries the human-readable explanation. |
+
+Both are declared with a `False` default on every code path, are passed through `main.py`
+into `api.py`'s response model, and are rendered in the web UI caveat banner. Regression
+tests assert they are always real booleans (`tests/test_classification_agent.py`,
+`tests/test_evidence_agent.py`).
+
 ---
 
 ## 6. Security Implementation
@@ -457,12 +470,12 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 ### 9.3 Unit Tests
 
 ```
-67 passed
+75 passed
 ```
 
 - **Intake Agent (13)** — entity extraction, query types, security, rejections, plus prompt-injection override/exfiltration rejection
-- **Evidence Agent (9)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback
-- **Classification Agent (16)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002) and CADD/ClinVar separation tests
+- **Evidence Agent (11)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback, plus `coverage_fallback` presence/value tests
+ - **Classification Agent (22)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, and 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches)
 - **LLM resilience (8)** — bounded SDK retry, 503 → fallback-model chain → `RuntimeError`, classifier and reporter degradation, direction-aware conflict semantics, plus end-to-end 503 cascade (rules + template fallback, encrypted message path)
 - **Security module (21)** — sanitization, auth, encryption, plus prompt-injection override/exfiltration/role-hijack/jailbreak blocking
 
@@ -546,8 +559,8 @@ variant_agent_system/
 │   └── security.py              # Auth, sanitization, encryption (Fernet)
 ├── tests/
 │   ├── test_intake_agent.py     # 13 tests
-│   ├── test_evidence_agent.py   # 9 tests
-│   ├── test_classification_agent.py  # 16 tests
+│   ├── test_evidence_agent.py   # 11 tests
+│   ├── test_classification_agent.py  # 22 tests
 │   ├── test_llm_resilience.py   # 8 tests
 │   └── test_security.py         # 21 tests
 ├── analysis_results/            # Generated visualizations for presentations
@@ -582,7 +595,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 67 tests
+python3 -m pytest tests/ -v    # 75 tests
 
 # Evaluation
 python3 evaluation.py                              # full suite (100 variants)
@@ -608,4 +621,4 @@ This project fulfills all assignment requirements:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: Pricing model (Free/Professional/Enterprise), target users, deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **67 passing unit tests**
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **75 passing unit tests**

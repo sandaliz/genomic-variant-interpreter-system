@@ -556,11 +556,24 @@ function renderResult(data){
   document.getElementById('repTimestamp').textContent = new Date().toLocaleString();
   document.getElementById('repMode').textContent = 'Reasoning: ' + (data.reasoning_mode === 'llm' ? 'LLM-assisted' : 'Rule-based');
 
+  // Assemble every caveat the pipeline flagged into one banner, so the
+  // human-review and coverage flags are surfaced instead of being dropped.
   const caveatBanner = document.getElementById('caveatBanner');
+  const caveats = [];
+  if (data.review_required){
+    caveats.push('<b>Human review required.</b> The evidence-based call disagrees with the ClinVar reviewed consensus, so a qualified reviewer should confirm the final classification.');
+  }
+  if (data.coverage_fallback){
+    caveats.push('<b>Reduced evidence coverage.</b> ' + escapeHtml(data.evidence_limitation ||
+      'This variant was resolved from the ClinVar coverage index rather than the study workbook, so functional predictors and allele frequencies may be unavailable.'));
+  }
   if (data.rsid_lookup_unsupported){
+    caveats.push('<b>Unverified match.</b> ' + escapeHtml(data.retrieval_caveat ||
+      'The rsID could not be resolved directly against the loaded variant index, so the result below is a free-text approximation rather than a verified match — confirm it against dbSNP/ClinVar before relying on it.'));
+  }
+  if (caveats.length){
     caveatBanner.style.display = 'block';
-    caveatBanner.innerHTML = '<b>Unverified match.</b> ' + escapeHtml(data.retrieval_caveat ||
-      'The rsID could not be resolved directly against the loaded variant index, so the result below is a free-text approximation rather than a verified match — confirm it against dbSNP/ClinVar before relying on it.');
+    caveatBanner.innerHTML = caveats.join('<br><br>');
   } else {
     caveatBanner.style.display = 'none';
   }
