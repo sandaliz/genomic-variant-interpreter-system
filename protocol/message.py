@@ -30,7 +30,7 @@ Security: payloads are encrypted with Fernet before being written to the shared 
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 import json
 import uuid
 

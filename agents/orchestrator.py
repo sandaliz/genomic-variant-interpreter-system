@@ -10,7 +10,7 @@ The four specialists (Intake, Evidence, Classification, Report) each do a job
 well, but on their own they are a fixed chain: every query takes the same path
 and the output is accepted whatever it says. That is a pipeline, not agency.
 
-This module adds the two properties the assignment means by *agentic behaviour*:
+This module adds the two properties that make the system agentic:
 
   * **Planning / dynamic control** -- the Supervisor reads the Intake result and
     decides, per query, how broadly to retrieve and how strict the verification

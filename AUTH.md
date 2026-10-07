@@ -706,26 +706,28 @@ there is nowhere for a credential to be baked into by accident:
 ## 14. Tests
 
 ```bash
-python3 -m pytest tests/ -v      # 645 tests
+python -m pytest tests/ -v      # 652 tests
 ```
 
 | File | Tests | Covers |
 |---|---|---|
-| `tests/test_auth.py` | 27 | hashing, registration, login, JWT tampering/expiry, revocation |
+| `tests/test_auth.py` | 35 | hashing, registration, login, JWT tampering/expiry, revocation |
 | `tests/test_entitlements.py` | 19 | month windows, quota math, idempotency, `FOR UPDATE` |
-| `tests/test_classify_api.py` | 16 | 401/403/429, plan gate, usage recording |
-| `tests/test_admin.py` | 31 | role checks, privilege guards, password reset, plan catalogue |
+| `tests/test_classify_api.py` | 20 | 401/403/429, plan gate, usage recording |
+| `tests/test_admin.py` | 83 | role checks, privilege guards, password reset, plan catalogue |
 | `tests/test_review_signoffs.py` | 17 | sign-off persistence, ownership, durability |
-| `tests/test_password_reset.py` | 23 | email login, code hashing, expiry, replay, attempt cap |
-| `tests/test_upgrades.py` | 25 | upgrade lifecycle, plan swap, terminal states |
+| `tests/test_password_reset.py` | 25 | email login, code hashing, expiry, replay, attempt cap |
+| `tests/test_upgrades.py` | 32 | upgrade lifecycle, plan swap, terminal states |
 | `tests/test_profile.py` | 20 | profile editing, email-change guard, self-service password change |
 | `tests/test_analytics.py` | 19 | dashboard figures, gap-filled daily series, role checks |
 | `tests/test_cache_isolation.py` | 6 | cache keys and cached results are per-account |
 | `tests/test_api_keys.py` | 10 | key creation gated on `plan.api_access`, digest-only storage, `X-API-Key` resolution, downgrade disables keys, revocation, ownership scoping |
 | `tests/test_audit_export.py` | 5 | `plan.audit_export` gate (403/401), caller-scoped JSON rows, CSV header + disposition, bad format rejected |
 | `tests/test_mcp_tools.py` | 6 | imports without the `mcp` package, clear error from `build_server()`, tool results, rejection, `top_k`, examples |
-| `tests/test_frontend.py` | 37 | view visibility, auth panes, JS↔DOM wiring, served assets |
-| existing agent tests | 91 | four-agent behaviour plus the Supervisor/Verifier control plane (`tests/test_orchestrator.py`) |
+| `tests/test_frontend.py` | 146 | view visibility, auth panes, JS↔DOM wiring, served assets |
+| `tests/test_pdf_auth.py` | 6 | PDF auth, escaping, cross-account trail isolation |
+| `tests/test_llm_output_checks.py` | 12 | LLM prior withholding, report verification, login timing |
+| agent tests (intake 22, evidence 15, classification 25, orchestrator 17, retrieval 47, evaluation 35, resilience 8, focused 1, cache 6, security 21, plus classify/profile counted above) | rest | four-agent behaviour, IR arithmetic, calibration/fairness, control plane |
 
 The account layer is tested against **in-memory SQLite** so the suite needs no
 database server; the models are deliberately portable (`native_enum=False`,

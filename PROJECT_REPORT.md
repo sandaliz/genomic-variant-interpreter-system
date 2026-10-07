@@ -799,7 +799,7 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 
 ### 9.3 Unit Tests
 
-**645 passing across 24 files** in the last full run — 73 covering the
+**652 passing across 26 files** in the last full run (`pytest --collect-only`: 652 collected) — 73 covering the
 agent/pipeline layer and 490 covering auth, security, entitlements, roles, admin,
 the MCP tools, frontend and review; **plus 82 further cases** added with the
 retrieval models and the analysis arithmetic: 47 in `tests/test_retrieval.py` and
@@ -1060,7 +1060,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 645 tests (no database required)
+python -m pytest tests/ -v    # 652 tests (no database required)
 node --test tests/js/          # frontend JS tests
 python3 scripts/smoke_auth.py  # end-to-end auth check against real PostgreSQL
 
@@ -1095,7 +1095,7 @@ This project provides:
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: pricing model (Free/Professional/Enterprise) **implemented** as PostgreSQL-backed plans with per-plan feature gating and monthly quotas, plus target users and deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, IR metrics (Precision@K, Recall@K, Exact-match@K, **MRR@K, nDCG@K, MAP@K**), a **head-to-head TF-IDF/BM25/RRF ranker comparison**, **confidence calibration (ECE, MCE, Brier, Brier skill)** and **subgroup fairness by variant type, allele-frequency band and review status**, ablation comparison, and **645 passing unit tests** (73 agent/pipeline + 490 auth/security/entitlement/role/API-key/audit-export/MCP/frontend/review, of which 82 are retrieval-model/fusion/metric/calibration/fairness arithmetic and 18 are hardening-regression cases for PDF auth, cross-account trail isolation, LLM output checks and the login timing shield, plus 2 gene-overview no-call cases and 2 gene-prefixed-HGVS fallback cases) (§9.3)
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, IR metrics (Precision@K, Recall@K, Exact-match@K, **MRR@K, nDCG@K, MAP@K**), a **head-to-head TF-IDF/BM25/RRF ranker comparison**, **confidence calibration (ECE, MCE, Brier, Brier skill)** and **subgroup fairness by variant type, allele-frequency band and review status**, ablation comparison, and **652 passing unit tests** (73 agent/pipeline + 490 auth/security/entitlement/role/API-key/audit-export/MCP/frontend/review, of which 82 are retrieval-model/fusion/metric/calibration/fairness arithmetic and 18 are hardening-regression cases for PDF auth, cross-account trail isolation, LLM output checks and the login timing shield, plus 2 gene-overview no-call cases and 2 gene-prefixed-HGVS fallback cases) (§9.3)
 
 ## 14. References
 

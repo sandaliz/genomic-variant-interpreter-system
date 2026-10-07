@@ -30,7 +30,7 @@ def main() -> int:
     assert reg.status_code == 201, reg.text
 
     login = client.post("/api/auth/login", json={
-        "username": f"smoke_{suffix}", "password": "smoke-test-password",
+        "email": f"smoke_{suffix}@example.com", "password": "smoke-test-password",
     })
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]

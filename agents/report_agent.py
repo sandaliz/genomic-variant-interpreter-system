@@ -46,12 +46,15 @@ outgoing payload (Fernet encryption within the same process).
 import sys
 import os
 import json
+import logging
 import math
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from protocol.message import AgentMessage, MessageType
 from llm.gemini_client import GeminiClient
+
+logger = logging.getLogger(__name__)
 
 
 def _is_directional_conflict(evidence: dict) -> bool:
@@ -736,7 +739,7 @@ class ReportAgent:
         except (RuntimeError, ConnectionError, TimeoutError, json.JSONDecodeError) as e:
             # Never retry with a second LLM request. Preserve a fast,
             # complete deterministic report when the single call fails.
-            print(f"[report_agent] Batch LLM failed, using template report: {e}")
+            logger.warning("Batch LLM failed, using template report: %s", e)
             return (
                 self.generate_report_template(
                     evidence, result, variant_id, top_k_results=top_k_results

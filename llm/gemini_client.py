@@ -10,11 +10,10 @@ Handles:
   - Automatic retry with a fallback model if the primary model is overloaded
 """
 
+import hashlib
+import logging
 import os
 import sys
-import time
-import hashlib
-from functools import lru_cache
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,6 +21,8 @@ from dotenv import load_dotenv
 
 # Load .env from project root
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiClient:
@@ -124,7 +125,7 @@ class GeminiClient:
         if self.enable_llm_cache:
             cache_key = self._generate_cache_key(prompt, system_instruction, max_tokens)
             if cache_key in self._llm_cache:
-                print(f"[llm] Cache hit for request")
+                logger.debug("LLM cache hit")
                 return self._llm_cache[cache_key]
 
         client = self._get_client()
@@ -139,7 +140,7 @@ class GeminiClient:
                 if self.enable_llm_cache:
                     cache_key = self._generate_cache_key(prompt, system_instruction, max_tokens)
                     self._llm_cache[cache_key] = result
-                    print(f"[llm] Cached result (cache size: {len(self._llm_cache)})")
+                    logger.debug("LLM response cached (cache size: %d)", len(self._llm_cache))
                 
                 return result
             except (ConnectionError, TimeoutError, RuntimeError,

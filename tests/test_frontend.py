@@ -954,7 +954,7 @@ class TestLandingPageRespectsTheSession:
         renderSession() can hide them in one place instead of by id.
         """
         for label in ("Create a free account", "Sign in", "Start free",
-                      "Create an account", "Reset password"):
+                      "Create an account", "Forgot your password?"):
             assert label in HTML, f"{label} vanished entirely"
 
         out_tags = re.findall(r"<[^>]*data-when=\"out\"[^>]*>", HTML)

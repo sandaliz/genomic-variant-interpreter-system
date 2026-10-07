@@ -33,7 +33,7 @@ Confidence mechanism:
            |
       Confidence score (0-100)
 
-  This makes the system more defensible in the viva -- we can explain
+  This makes the confidence auditable -- we can explain
   *why* the confidence is what it is, rather than the LLM saying "90%".
 
 Responsible AI layer (explicit pipeline):
@@ -926,8 +926,6 @@ class ClassificationAgent:
                  directive: str | None = None) -> AgentMessage:
         # Decrypt the incoming payload (it was encrypted by the Evidence Agent)
         evidence = evidence_message.decrypt_payload()
-
-        llm_used = False
 
         # --- Gene-level overview: no single variant was asked about ------
         # "What variants are in BRCA2?" is an evidence listing, not a

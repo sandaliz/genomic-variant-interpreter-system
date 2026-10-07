@@ -3,7 +3,7 @@
 **File:** `protocol/message.py` · **Security:** `protocol/security.py` · **Transport layer:** `api.py`
 
 This document is the single reference for how the agents in this system talk to
-each other. It is written to be readable on its own during the viva.
+each other. It is written to be readable on its own.
 
 The pipeline has **four specialist agents** (Intake, Evidence Retrieval,
 Classification, Report) plus **two control agents** (Supervisor, Verifier) that

@@ -63,8 +63,6 @@ from retrieval.fusion import DEFAULT_RRF_K, rank_from_scores, reciprocal_rank_fu
 from retrieval.metrics import (
     average_precision_at_k,
     ndcg_at_k,
-    precision_at_k,
-    recall_at_k,
     reciprocal_rank,
 )
 
