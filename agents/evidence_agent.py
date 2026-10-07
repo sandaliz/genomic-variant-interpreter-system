@@ -820,6 +820,7 @@ class EvidenceRetrievalAgent:
         # Otherwise it is only set on the record-found path, so a consumer reading
         # it with .get() would receive None instead of False on not-found results.
         evidence = {"found": False, "query_type": query_type, "coverage_fallback": False}
+        evidence["intent"] = intake_payload.get("intent", "classification")
 
         # --- CANDIDATE RETRIEVAL ---
         candidates = pd.DataFrame()
@@ -940,6 +941,7 @@ class EvidenceRetrievalAgent:
                 relevance_explanation=primary.get("relevance_explanation"),
             )
             evidence["query_type"] = query_type
+            evidence["intent"] = intake_payload.get("intent", "classification")
             evidence["coverage_fallback"] = from_variant_summary
             if from_variant_summary:
                 evidence["evidence_limitation"] = (

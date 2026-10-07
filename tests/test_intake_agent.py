@@ -63,6 +63,25 @@ class TestIntakeAgent:
         assert payload["hgvs"] == "NC_000017.10:g.41197778A>G"
         assert payload["query_type"] == "gene_variant"
 
+    def test_process_population_frequency_question(self, intake_agent, message_log):
+        msg = intake_agent.process(
+            "Is the BRCA1 NC_000017.10:g.41276111C>A variant common "
+            "in the general population?",
+            message_log,
+        )
+        payload = msg.decrypt_payload()
+        assert payload["query_type"] == "gene_variant"
+        assert payload["intent"] == "population_frequency"
+
+    def test_gene_and_rsid_stays_variant_specific(self, intake_agent, message_log):
+        msg = intake_agent.process(
+            "BRCA1 rs80356943 Is this variant common in the population?",
+            message_log,
+        )
+        payload = msg.decrypt_payload()
+        assert payload["query_type"] == "rsid"
+        assert payload["intent"] == "population_frequency"
+
     def test_process_gene_only_query(self, intake_agent, message_log):
         """Should handle 'What variants are in BRCA1?' as a gene-only query."""
         msg = intake_agent.process("What variants are in BRCA1?", message_log)

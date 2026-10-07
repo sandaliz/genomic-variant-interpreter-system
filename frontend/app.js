@@ -2322,12 +2322,25 @@ async function classifyVariant(){
   const timer = setInterval(() => { mi = (mi+1) % msgs.length; msgEl.textContent = msgs[mi]; }, 900);
 
   try {
+    // Resolve short follow-up questions against the last displayed variant.
+    // The API remains stateless: the variant context is made explicit before
+    // the request is sent, so every run is independently auditable.
+    let submittedQuery = query;
+    const hasVariantReference = /\b(?:BRCA\s*[12]|NC_\d+\.\d+|(?:NM|NR)_\d+\.\d+|rs\d+|[cg]\.)\b/i.test(query);
+    const isFollowUp = /\b(?:its|this|that|the variant|population|frequency|protein|consequence|impact|clinvar|submitters?|common|rare)\b/i.test(query);
+    const prior = latestResult?.extracted_entities;
+    const priorIdentity = prior?.hgvs || prior?.rsid || (
+      prior?.position ? `position ${prior.position}` : ''
+    );
+    if (!hasVariantReference && isFollowUp && priorIdentity) {
+      submittedQuery = `${prior.gene || ''} ${priorIdentity} ${query}`.trim();
+    }
     // JWT bearer auth: the token identifies the account whose plan and quota
     // gate this run. The agent layer still applies its own API-key check.
     const response = await authFetch('/api/classify', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: submittedQuery })
     });
     const data = await response.json().catch(() => ({}));
     if (response.status === 429){
@@ -2848,8 +2861,60 @@ function rerunHistory(index){
   classifyVariant();
 }
 
+function renderFocusedEvidence(data){
+  const panel = document.getElementById('focusedEvidencePanel');
+  if (!panel) return;
+  const labels = {
+    population_frequency: 'Population frequency',
+    protein_impact: 'Protein and functional impact',
+    variant_consequence: 'Variant consequence',
+    prior_classifications: 'Prior classifications and expert agreement',
+  };
+  const intent = data.intent;
+  const record = (data.top_k_results || [])[0] || {};
+  if (!labels[intent] || data.is_gene_overview || !record) {
+    panel.style.display = 'none';
+    return;
+  }
+  const value = (key) => record[key] == null || record[key] === ''
+    ? 'Not available' : String(record[key]);
+  let answer = '';
+  if (intent === 'population_frequency') {
+    const frequencies = ['af_esp', 'af_exac', 'af_tgp', 'af_gnomad']
+      .map((key) => Number(record[key]))
+      .filter(Number.isFinite);
+    answer = 'Maximum observed allele frequency: ' +
+      (frequencies.length ? Math.max(...frequencies) : 'Not available');
+  } else if (intent === 'protein_impact') {
+    answer = `SIFT: ${value('sift_prediction')} · PolyPhen: ${value('polyphen_prediction')} · CADD: ${value('cadd_score')}`;
+  } else if (intent === 'variant_consequence') {
+    answer = `Consequence: ${value('consequence')} · Type: ${value('variant_type')} · Impact: ${value('impact')}`;
+  } else {
+    answer = `ClinVar: ${value('prior_classification')} · Review: ${value('prior_review_status')} · Submitters: ` +
+      (_isDirectionalConflict(record) ? 'directional disagreement recorded' : 'no directional conflict recorded');
+  }
+  panel.innerHTML = '<h3>' + labels[intent] + '</h3>'
+    + '<div class="focus-answer">' + escapeHtml(answer) + '</div>'
+    + '<div class="focus-note">This answers the requested evidence question. '
+    + 'The complete classification, confidence score, criteria, retrieval results, '
+    + 'and audit trail are shown below.</div>';
+  panel.style.display = 'block';
+}
+
+function _isDirectionalConflict(record){
+  return String(record.prior_classification || '').toLowerCase() === 'conflicting' ||
+    Number(record.conflicting_classification_flag) === 1;
+}
+
 function renderResult(data){
   document.getElementById('results').style.display = 'block';
+  const followupPanel = document.getElementById('followupPanel');
+  const entities = data.extracted_entities || {};
+  if (followupPanel) {
+    followupPanel.hidden = !(
+      entities.hgvs || entities.rsid || entities.position
+    );
+  }
   renderAgentic(data);
   renderConfidence(data);
 
@@ -2871,6 +2936,7 @@ function renderResult(data){
   if (data.review_required){
     caveats.push('<b>Human review required.</b> The evidence-based call disagrees with the ClinVar reviewed consensus, so a qualified reviewer should confirm the final classification.');
   }
+
   if (data.coverage_fallback){
     caveats.push('<b>Reduced evidence coverage.</b> ' + escapeHtml(data.evidence_limitation ||
       'This variant was resolved from the ClinVar coverage index rather than the study workbook, so functional predictors and allele frequencies may be unavailable.'));
@@ -2885,6 +2951,7 @@ function renderResult(data){
   } else {
     caveatBanner.style.display = 'none';
   }
+  renderFocusedEvidence(data);
 
   const isGeneOverview = !!data.is_gene_overview;
   const banner = document.getElementById('geneOverviewBanner');
@@ -2942,6 +3009,7 @@ function renderResult(data){
       basisEl.innerHTML = '<div><b>Basis of final call:</b> evidence-based ' +
         'ACMG-style reasoning.</div>';
     }
+
     loadReviewIntoForm(data.review_signoff);
   }
 
@@ -3069,6 +3137,14 @@ function renderResult(data){
 // Six agents the visitor can pick apart instead of six paragraphs to skim. The
 // copy here is deliberately the mechanism, not the marketing: what each agent
 // takes in, what it hands on, and which of the two is allowed to send work back.
+function askFollowUp(question){
+  const box = document.getElementById('query');
+  const entities = latestResult?.extracted_entities || {};
+  if (!box || !(entities.hgvs || entities.rsid || entities.position)) return;
+  box.value = question;
+  classifyVariant();
+}
+
 const FLOW_STEPS = [
   {
     name: 'Intake',

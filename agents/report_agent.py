@@ -253,6 +253,20 @@ class ReportAgent:
                 "certified genetic counselor."
             )
         else:
+            intent = evidence.get("intent", "classification")
+            if intent != "classification":
+                focused = self._generate_focused_evidence_report(
+                    evidence, result, variant_id, intent, top_k_results or []
+                )
+                # Keep the focused answer concise at the top, but retain the
+                # complete auditable interpretation for users who need the
+                # confidence, criteria, and retrieval context.
+                full_evidence = dict(evidence)
+                full_evidence["intent"] = "classification"
+                complete = self.generate_report_template(
+                    full_evidence, result, variant_id, top_k_results
+                )
+                return focused + "\n\nCOMPLETE VARIANT INTERPRETATION\n" + complete
             # Classification result
             classification = result.get("classification", "Unknown")
             confidence = result.get("confidence", "none")
@@ -451,6 +465,82 @@ class ReportAgent:
             lines.append("")
             lines.append(self.TEMPLATE_DISCLAIMER)
 
+        return "\n".join(lines)
+
+    def _generate_focused_evidence_report(
+        self, evidence: dict, result: dict, variant_id: str, intent: str,
+        top_k_results: list,
+    ) -> str:
+        """Answer a specific evidence question instead of repeating a verdict."""
+        labels = {
+            "population_frequency": "Population frequency",
+            "protein_impact": "Protein and functional impact",
+            "variant_consequence": "Variant consequence",
+            "prior_classifications": "Prior classifications and expert agreement",
+        }
+        title = labels.get(intent, "Requested evidence")
+        lines = [
+            f"{title}: {variant_id}",
+            "=" * 50,
+        ]
+        if not evidence.get("found"):
+            lines.append("No matching evidence record was found in the database.")
+        elif intent == "population_frequency":
+            frequencies = [
+                value for value in (
+                    evidence.get("af_esp"), evidence.get("af_exac"),
+                    evidence.get("af_tgp"), evidence.get("af_gnomad"),
+                ) if value is not None
+            ]
+            if frequencies:
+                maximum = max(frequencies)
+                interpretation = (
+                    "This is relatively common in the available population data."
+                    if maximum > 0.001 else
+                    "This is rare in the available population data."
+                )
+                lines.append(f"Maximum observed allele frequency: {maximum}")
+                lines.append(interpretation)
+                lines.append(
+                    "Frequency alone is not a diagnosis or a complete benign "
+                    "classification; ancestry coverage and disease-specific "
+                    "thresholds must be considered."
+                )
+            else:
+                lines.append("Population allele-frequency data is not available.")
+                lines.append(
+                    "The system cannot determine whether this variant is common "
+                    "from the indexed evidence."
+                )
+        elif intent == "protein_impact":
+            lines.extend([
+                f"Variant consequence: {self._display(evidence.get('consequence'))}",
+                f"Predicted impact: {self._display(evidence.get('impact'))}",
+                f"SIFT: {self._display(evidence.get('sift_prediction'))}",
+                f"PolyPhen: {self._display(evidence.get('polyphen_prediction'))}",
+                f"CADD: {self._display(evidence.get('cadd_score'))}",
+            ])
+        elif intent == "variant_consequence":
+            lines.extend([
+                f"Variant consequence: {self._display(evidence.get('consequence'))}",
+                f"Variant type: {self._display(evidence.get('variant_type'))}",
+                f"Predicted impact: {self._display(evidence.get('impact'))}",
+            ])
+        elif intent == "prior_classifications":
+            lines.extend([
+                f"ClinVar classification: {self._display(evidence.get('prior_classification'))}",
+                f"Review status: {self._display(evidence.get('prior_review_status'))}",
+                "Submitter agreement: " + (
+                    "conflicting"
+                    if _is_directional_conflict(evidence) else "no directional conflict recorded"
+                ),
+            ])
+        lines.extend([
+            "",
+            "This focused answer reports the requested evidence and does not "
+            "replace a complete variant interpretation.",
+            self.TEMPLATE_DISCLAIMER,
+        ])
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

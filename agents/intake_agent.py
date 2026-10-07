@@ -24,6 +24,8 @@ Supports multiple query types (intents):
                      intent = rsid_search
   6. position_only:  "What variant is at position 41197778?"
                      intent = position_search
+  7. evidence questions: "Is this variant common in the population?"
+                          intent = population_frequency
 
 NLP approach:
   - **Entity extraction (NER):** rule-based regex + a small gene dictionary.
@@ -95,8 +97,24 @@ _GENE_BEFORE_HGVS = re.compile(
 # question words such as "WHAT" and "IS" from being reported as genes.
 _GENE_TOKEN_PATTERN = re.compile(r"\b[A-Z]{2,}[0-9]*\b")
 _QUERY_WORDS = {"IS", "WHAT", "WHERE", "HOW", "TELL", "SHOW", "CLASSIFY", "THE"}
-# Intent labels are derived from the query type (see _determine_intent), not from
-# keyword matching, so there is no pattern table to maintain here.
+_EVIDENCE_INTENT_PATTERNS = (
+    ("population_frequency", re.compile(
+        r"\b(common|rare|frequency|frequent|population|allele frequency|af)\b",
+        re.IGNORECASE,
+    )),
+    ("protein_impact", re.compile(
+        r"\b(protein|functional|function|sift|polyphen|cadd|disrupt)\b",
+        re.IGNORECASE,
+    )),
+    ("variant_consequence", re.compile(
+        r"\b(consequence|effect|impact|missense|frameshift|stop[- ]?gained)\b",
+        re.IGNORECASE,
+    )),
+    ("prior_classifications", re.compile(
+        r"\b(clinvar|submitters?|experts?|classifications?|consensus|agree)\b",
+        re.IGNORECASE,
+    )),
+)
 
 
 class IntakeAgent:
@@ -178,18 +196,25 @@ class IntakeAgent:
         """
         if entities["hgvs"]:
             return "gene_variant" if entities["gene"] else "variant_only"
+        # An rsID identifies one variant even when the user also supplies its
+        # gene. Check it before gene-only so follow-up queries such as
+        # "BRCA1 rs80356943 population frequency" stay variant-specific.
+        if entities["rsid"]:
+            return "rsid"
         if entities["gene"] and entities["position"]:
             return "position"
         if entities["gene"]:
             return "gene_only"
-        if entities["rsid"]:
-            return "rsid"
         if entities["position"]:
             return "position_only"
         return "unknown"
 
-    def _determine_intent(self, query_type: str) -> str:
-        """Map a query_type to a human-readable intent label."""
+    def _determine_intent(self, query_type: str, cleaned_query: str = "") -> str:
+        """Classify the requested evidence focus before the broad query type."""
+        if query_type in {"gene_variant", "variant_only", "rsid"}:
+            for intent, pattern in _EVIDENCE_INTENT_PATTERNS:
+                if pattern.search(cleaned_query):
+                    return intent
         intents = {
             "gene_variant": "classification",
             "gene_only": "gene_search",
@@ -212,7 +237,7 @@ class IntakeAgent:
 
         # --- NLP step: intent classification ---
         query_type = self._determine_query_type(entities)
-        intent = self._determine_intent(query_type)
+        intent = self._determine_intent(query_type, cleaned)
 
         # Detect if the query mentions an unsupported gene (e.g. TP53, KRAS)
         # right before the HGVS notation -- this should be rejected,
