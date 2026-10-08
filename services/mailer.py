@@ -98,8 +98,7 @@ class LogMailer(Mailer):
         # it so it is greppable in the server log without reading the body.
         logger.info("mail[log] to=%s subject=%r%s", to_email, subject,
                     f" code={secret}" if secret else "")
-        print(f"[mail:log] to={to_email} subject={subject!r}"
-              f"{f' code={secret}' if secret else ''}\n{body}")
+        logger.debug("mail[log] body for %s:\n%s", to_email, body)
         return True
 
 
