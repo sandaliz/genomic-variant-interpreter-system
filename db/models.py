@@ -14,7 +14,7 @@ Design notes
   when PostgreSQL is not available.
 """
 
-import datetime
+import datetime as dt
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -251,7 +251,7 @@ class ReviewSignoff(Base):
         String(128), unique=True, nullable=False, index=True
     )
     reviewer_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    review_date: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    review_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
     signature: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     saved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
