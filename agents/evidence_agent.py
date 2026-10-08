@@ -56,7 +56,7 @@ This makes the Evidence Agent a proper IR module rather than a simple
 top-K selection, and explainable results, which are core IR concepts.
 
 Security: decrypts the incoming message payload, and encrypts its own
-outgoing payload (encryption in transit between agents).
+outgoing payload (Fernet encryption within the same process).
 """
 
 import sys
@@ -122,7 +122,9 @@ def _normalise_hgvs(text) -> str:
         rest.startswith("c.") or rest.startswith("g.")
     ):
         value = rest
-    return re.sub(r"(del|ins)([acgt])$", r"\1", value)
+    # ClinVar may omit the inserted/deleted/duplicated base in its stored
+    # notation: c.5946delT -> c.5946del and c.5266dupC -> c.5266dup.
+    return re.sub(r"(del|ins|dup)([acgt])$", r"\1", value)
 
 
 def _hgvs_matches(haystack, needle) -> bool:
@@ -820,6 +822,7 @@ class EvidenceRetrievalAgent:
         # Otherwise it is only set on the record-found path, so a consumer reading
         # it with .get() would receive None instead of False on not-found results.
         evidence = {"found": False, "query_type": query_type, "coverage_fallback": False}
+        evidence["intent"] = intake_payload.get("intent", "classification")
 
         # --- CANDIDATE RETRIEVAL ---
         candidates = pd.DataFrame()
@@ -940,6 +943,7 @@ class EvidenceRetrievalAgent:
                 relevance_explanation=primary.get("relevance_explanation"),
             )
             evidence["query_type"] = query_type
+            evidence["intent"] = intake_payload.get("intent", "classification")
             evidence["coverage_fallback"] = from_variant_summary
             if from_variant_summary:
                 evidence["evidence_limitation"] = (
@@ -963,7 +967,13 @@ class EvidenceRetrievalAgent:
                 evidence["top_k_results"].append({
                     "gene": self._clean_value(row.get("Gene")),
                     "hgvs": self._clean_value(row.get("HGVS_notation")),
+                    "consequence": self._clean_value(row.get("Consequence")),
+                    "variant_type": self._clean_value(row.get("Variant_type")),
                     "impact": self._clean_value(row.get("IMPACT")),
+                    "af_esp": self._clean_value(row.get("AF_ESP")),
+                    "af_exac": self._clean_value(row.get("AF_EXAC")),
+                    "af_tgp": self._clean_value(row.get("AF_TGP")),
+                    "af_gnomad": self._clean_value(row.get("AF_gnomAD")),
                     "relevance_score": float(row.get("relevance_score", 0)),
                     "relevance_explanation": row.get("relevance_explanation", ""),
                     "match_type": row.get("match_type", "TF-IDF text similarity"),
@@ -971,6 +981,9 @@ class EvidenceRetrievalAgent:
                     "sift_prediction": self._clean_value(row.get("SIFT_prediction")),
                     "polyphen_prediction": self._clean_value(row.get("PolyPhen_prediction")),
                     "cadd_score": self._clean_value(row.get("CADD_score")),
+                    "prior_classification": self._clean_value(row.get("ClinicalSignificance")),
+                    "prior_review_status": self._clean_value(row.get("ClinVarReviewStatus")),
+                    "prior_review_stars": self._clean_value(row.get("ClinVarReviewStars")),
                     "predictor_available": {
                         "sift": bool(row_sift_available),
                         "polyphen": bool(row_polyphen_available),
@@ -1110,7 +1123,7 @@ if __name__ == "__main__":
                 print(f"  -> IR: strategy={meta['retrieval_strategy']}, "
                       f"candidates={meta['candidates_retrieved']}, top_k={meta['top_k_returned']}")
             if "top_k_results" in payload:
-                print(f"  -> Top-K results:")
+                print("  -> Top-K results:")
                 for r in payload["top_k_results"][:5]:
                     print(f"     - [{r['match_type']}] {r['gene']}:{r['hgvs']} "
                           f"(score={r['relevance_score']:.2f}, exact={r['exact_match']})")
