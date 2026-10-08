@@ -1,0 +1,64 @@
+# Tool configuration for the linters and the coverage run.
+#
+# pytest's own configuration lives in pytest.ini, which pytest prefers over
+# this file when both are present -- there is deliberately no [tool.pytest]
+# section here, so there is exactly one place to look for how tests run.
+
+[tool.ruff]
+target-version = "py313"
+# 100 rather than the 88 default: the agents carry long clinical strings and
+# long explanatory comments, and reflowing them to 88 makes them harder to read,
+# not easier.
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # line length: handled by the formatter, not worth failing a build over
+    "B008",  # FastAPI's Depends() in a default argument is the documented idiom
+]
+exclude = ["__pycache__", "data", "migrations/versions", "frontend", ".venv"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import after sys.path manipulation, which the import sorter would move.
+"tests/*" = ["E402"]
+"scripts/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.13"
+# Only the retrieval package is checked by default: it is fully annotated, so a
+# type error there is a real error. The older agent modules are annotated in
+# patches rather than in full, and running mypy over them would report decades
+# of implicit Any instead of anything actionable.
+files = ["retrieval"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.coverage.run]
+source = ["agents", "auth", "db", "protocol", "retrieval", "services"]
+omit = [
+    "*/__pycache__/*",
+    "tests/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+# Statement-level coverage of the CLI entry points is not meaningful -- they are
+# exercised by running them, which the test suite does not do.
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
