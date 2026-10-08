@@ -2,14 +2,14 @@
 
 ## Overview
 
-The analysis notebook (`analysis.ipynb`) provides data exploration, model performance visualization, and presentation materials for the Genomic Variant Interpretation System. It complements the production system by offering interactive visualizations and statistical analysis tools.
+The analysis notebook (`analysis.ipynb`) provides data exploration, model-performance visualization, and statistical analysis for the Genomic Variant Interpretation System. It complements the production system with reproducible evaluation artifacts.
 
 ## Purpose
 
 The analysis notebook serves two distinct purposes:
 
 1. **Data Exploration and Research**: Statistical analysis, model training experiments, and information retrieval demonstrations
-2. **Presentation Materials**: High-quality visualizations for assignment presentations, technical reports, and demonstrations
+2. **Evaluation Artifacts**: Reproducible visualizations and statistical summaries for system evaluation
 
 This approach maintains separation between the production system (designed for deployment) and research tools (designed for exploration and presentation).
 
@@ -62,7 +62,7 @@ Running the analysis notebook generates the following visualizations in the `ana
 ### Quick Start
 ```bash
 # Activate the project virtual environment, then open the notebook directly
-source /Users/sandali/projects/.venv/bin/activate
+source .venv/bin/activate
 jupyter notebook analysis.ipynb
 ```
 
@@ -97,8 +97,8 @@ jupyter notebook analysis.ipynb
 - **Use Case**: Production deployment, API integration, automated testing
 
 **Analysis Notebook** (`analysis.ipynb`):
-- **Purpose**: Research, exploration, presentation materials
-- **Output**: Visual graphs, statistical analysis, presentation materials
+- **Purpose**: Research, exploration, and evaluation
+- **Output**: Visual graphs and statistical analysis
 - **Design**: Interactive, exploration-focused, visual output
 - **Use Case**: Data exploration, model development, presentation creation
 
@@ -149,15 +149,22 @@ variant_agent_system/
 │   ├── ir_performance.png
 │   └── system_architecture.png
 ├── agents/                     # Production agents
+├── auth/                       # JWT account, session-cookie and CSRF layer
+├── db/                         # SQLAlchemy models and session handling
+├── services/                   # Entitlements, API keys, history, analytics, mail, upgrades
+├── retrieval/                  # BM25, rank fusion and the ranking metrics
+├── migrations/                 # Alembic migrations (nine tables)
+├── docs/                       # Architecture, sequence, data-model and retrieval documents
 ├── data/                       # Dataset
 ├── frontend/                   # Web UI
 ├── llm/                        # LLM client
 ├── protocol/                   # Communication protocol (see protocol/PROTOCOL.md)
+├── scripts/                    # Data enrichment, plan seeding, admin bootstrap
 ├── tests/                      # Unit tests
 ├── api.py                      # REST API
 ├── evaluation.py               # Evaluation script
 ├── main.py                     # CLI orchestrator
-└── requirements.txt            # Dependencies
+└── requirements.txt            # Dependencies (requirements-api.txt is the lean runtime set)
 ```
 
 ## Dependencies
@@ -179,22 +186,14 @@ These are included in the updated `requirements.txt` but are optional for produc
 pip install matplotlib seaborn jupyter
 ```
 
-### TF-IDF Cache Version Warning (harmless)
+### TF-IDF Cache Versions
 
-Running the notebook or `evaluation.py` may print:
-
-```
-InconsistentVersionWarning: Trying to unpickle estimator TfidfVectorizer
-from version 1.9.0 when using version 1.8.0
-```
-
-This is scikit-learn noting that the cached TF-IDF index
-(`data/*_tfidf_cache.pkl`) was built by a different scikit-learn build. The cached
-vectors remain fully usable, and retrieval and all reported metrics are unaffected,
-so the warning can be ignored.
-
-To silence it, delete the caches and let the Evidence Agent rebuild them under your
-installed version:
+The TF-IDF index caches (`data/*_tfidf_cache.pkl`) are gitignored build
+artifacts. They are version-sensitive: a cache built under one scikit-learn
+release warns (`InconsistentVersionWarning`) when loaded under another. The
+shipped caches were rebuilt under the pinned `scikit-learn==1.8.0`, so no
+warning appears on the supported stack. After any scikit-learn upgrade,
+delete them and let the Evidence Agent rebuild:
 
 ```bash
 rm data/clinvar_variant_dataset_tfidf_cache.pkl \

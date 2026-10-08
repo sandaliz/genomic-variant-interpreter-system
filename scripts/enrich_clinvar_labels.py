@@ -43,7 +43,6 @@ Usage
 import argparse
 import gzip
 import os
-import sys
 import urllib.request
 
 import pandas as pd
@@ -450,4 +449,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

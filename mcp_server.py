@@ -4,8 +4,8 @@ mcp_server.py
 Model Context Protocol (MCP) interface to the VariantLens agent pipeline.
 
 The REST API in ``api.py`` is an HTTP transport; this is a second, standardised
-transport over the same agents, using **MCP** -- the protocol named in the
-assignment brief for exposing tools to an LLM host. An MCP host (Claude Desktop,
+transport over the same agents, using **MCP** for exposing tools to an LLM host.
+An MCP host (Claude Desktop,
 an IDE agent, or any MCP client) can connect and call the pipeline as tools
 without knowing anything about the internal ``AgentMessage`` protocol; the tools
 below are the adapter from MCP to that protocol.
