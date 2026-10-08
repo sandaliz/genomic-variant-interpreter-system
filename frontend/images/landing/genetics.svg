@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Chromosome ideograms for chr17 and chr13 with the BRCA1 and BRCA2 loci marked, beside four ranked ClinVar records showing a match type, a relevance score and the written reason for retrieval">
+  <!--
+    VariantLens landing imagery - genetic insight (platform card 02).
+
+    The card's copy is about the evidence coming back with a relevance score, a
+    match type and a written reason, so the right half is that list. The left half
+    is the two chromosomes the whole product is scoped to, drawn with the loci at
+    their real cytobands - chr17 at 17q21.31 and chr13 at 13q13.1 - which is
+    also why chr13 is drawn longer: it is the larger chromosome, and an ideogram
+    pair of equal length would be the kind of detail that is wrong on purpose.
+
+    The match types and the reason string are the ones evidence_agent.py builds,
+    verbatim, so the picture cannot promise a field the API does not return.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:24px;font-weight:700;letter-spacing:3px;fill:#8A909B}
+      .match{font-size:22px;font-weight:600;fill:#3F5F9A}
+      .reason{font-size:22px;fill:#626873}
+      .band-p{fill:#AFC0DA}
+      .band-q{fill:#E1E8F2}
+    </style>
+    <linearGradient id="chBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#F6F8FC"/>
+      <stop offset="1" stop-color="#ECF0F7"/>
+    </linearGradient>
+    <radialGradient id="chGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="chGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+    <clipPath id="chr17clip"><rect x="110" y="150" width="64" height="396" rx="32"/></clipPath>
+    <clipPath id="chr13clip"><rect x="320" y="150" width="64" height="470" rx="32"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#chBg)"/>
+  <rect width="1200" height="900" fill="url(#chGrid)" opacity="0.55"/>
+  <ellipse cx="250" cy="420" rx="420" ry="420" fill="url(#chGlow)"/>
+
+  <text class="s lbl" x="72" y="96">CHROMOSOME CONTEXT</text>
+
+  <!-- ===== Ideograms. Bands are schematic; the centromere gap and the relative
+       arm lengths are not. ===== -->
+  <g>
+    <rect x="110" y="150" width="64" height="396" rx="32" fill="#E1E8F2"/>
+    <g clip-path="url(#chr17clip)">
+      <rect x="110" y="150" width="64" height="40" class="band-p"/>
+      <rect x="110" y="190" width="64" height="38" class="band-q"/>
+      <rect x="110" y="228" width="64" height="37" class="band-p"/>
+      <rect x="110" y="265" width="64" height="14" fill="#FFFFFF"/>
+      <rect x="110" y="279" width="64" height="44" class="band-q"/>
+      <rect x="110" y="323" width="64" height="44" class="band-p"/>
+      <rect x="110" y="367" width="64" height="45" class="band-q"/>
+      <rect x="110" y="412" width="64" height="45" class="band-p"/>
+      <rect x="110" y="457" width="64" height="44" class="band-q"/>
+      <rect x="110" y="501" width="64" height="45" class="band-p"/>
+    </g>
+    <rect x="110.5" y="150.5" width="63" height="395" rx="31.5" fill="none" stroke="#B9C8E0"/>
+    <!-- BRCA1 / 17q21.31 -->
+    <rect x="110" y="361" width="64" height="22" fill="#3F5F9A"/>
+    <line x1="174" y1="372" x2="250" y2="372" stroke="#3F5F9A" stroke-width="2"/>
+    <circle cx="250" cy="372" r="5" fill="#3F5F9A"/>
+  </g>
+
+  <g>
+    <rect x="320" y="150" width="64" height="470" rx="32" fill="#E1E8F2"/>
+    <g clip-path="url(#chr13clip)">
+      <rect x="320" y="150" width="64" height="35" class="band-p"/>
+      <rect x="320" y="185" width="64" height="35" class="band-q"/>
+      <rect x="320" y="220" width="64" height="14" fill="#FFFFFF"/>
+      <rect x="320" y="234" width="64" height="55" class="band-p"/>
+      <rect x="320" y="289" width="64" height="55" class="band-q"/>
+      <rect x="320" y="344" width="64" height="55" class="band-p"/>
+      <rect x="320" y="399" width="64" height="55" class="band-q"/>
+      <rect x="320" y="454" width="64" height="55" class="band-p"/>
+      <rect x="320" y="509" width="64" height="55" class="band-q"/>
+      <rect x="320" y="564" width="64" height="56" class="band-p"/>
+    </g>
+    <rect x="320.5" y="150.5" width="63" height="469" rx="31.5" fill="none" stroke="#B9C8E0"/>
+    <!-- BRCA2 / 13q13.1 -->
+    <rect x="320" y="288" width="64" height="22" fill="#3F5F9A"/>
+    <line x1="384" y1="299" x2="452" y2="299" stroke="#3F5F9A" stroke-width="2"/>
+    <circle cx="452" cy="299" r="5" fill="#3F5F9A"/>
+  </g>
+
+  <text class="m" x="110" y="648" font-size="26" fill="#626873">chr17</text>
+  <text class="s" x="110" y="696" font-size="34" font-weight="700" fill="#142B4A">BRCA1</text>
+  <text class="s" x="110" y="732" font-size="24" fill="#8A909B">17q21.31</text>
+  <text class="m" x="320" y="648" font-size="26" fill="#626873">chr13</text>
+  <text class="s" x="320" y="696" font-size="34" font-weight="700" fill="#142B4A">BRCA2</text>
+  <text class="s" x="320" y="732" font-size="24" fill="#8A909B">13q13.1</text>
+
+  <!-- ===== The ranked records ===== -->
+  <text class="s lbl" x="520" y="196">RANKED EVIDENCE</text>
+  <text class="s" x="1128" y="196" font-size="22" fill="#8A909B" text-anchor="end">top 5 of 3,009</text>
+
+  <!-- The first record is opened up. A score with no visible reason is the exact
+       thing the card claims not to do, so one row spends its space on the reason
+       the retrieval code actually writes. -->
+  <rect x="520" y="220" width="608" height="176" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="m" x="552" y="266" font-size="30" fill="#20242A">NM_007294.4:c.5266dupC</text>
+  <text class="m" x="1096" y="268" font-size="34" fill="#3F5F9A" text-anchor="end">0.98</text>
+  <rect x="940" y="284" width="156" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="940" y="284" width="153" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="s match" x="552" y="314">Exact variant match</text>
+  <text class="s reason" x="552" y="350">Retrieved because: HGVS notation exactly</text>
+  <text class="s reason" x="552" y="378">matches the query; gene BRCA1; RRF: 0.843</text>
+
+  <rect x="520" y="412" width="608" height="96" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="m" x="552" y="466" font-size="28" fill="#20242A">chr17:41,244,442</text>
+  <text class="m" x="1096" y="468" font-size="30" fill="#3F5F9A" text-anchor="end">0.86</text>
+  <rect x="958" y="482" width="138" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="958" y="482" width="119" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="s match" x="552" y="498" font-size="22">Same genomic position</text>
+
+  <rect x="520" y="524" width="608" height="96" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="m" x="552" y="578" font-size="28" fill="#20242A">BRCA1 c.5123C&gt;A</text>
+  <text class="m" x="1096" y="580" font-size="30" fill="#3F5F9A" text-anchor="end">0.71</text>
+  <rect x="958" y="594" width="138" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="958" y="594" width="98" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="s match" x="552" y="610" font-size="22">Same gene</text>
+
+  <rect x="520" y="636" width="608" height="96" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="m" x="552" y="690" font-size="28" fill="#20242A">rs80357906</text>
+  <text class="m" x="1096" y="692" font-size="30" fill="#3F5F9A" text-anchor="end">0.44</text>
+  <rect x="958" y="706" width="138" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="958" y="706" width="61" height="9" rx="4.5" fill="#3F5F9A"/>
+  <text class="s match" x="552" y="722" font-size="22">TF-IDF cosine similarity</text>
+
+  <text class="s" x="520" y="800" font-size="22" fill="#8A909B">every record carries its match type, its score and its reason</text>
+</svg>
