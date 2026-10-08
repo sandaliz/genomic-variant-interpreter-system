@@ -140,11 +140,7 @@ task, not a bug report.
    not survive a restart and is identical across every worker started from the
    same parent only by accident. Give it a real key from the environment before
    any multi-process deployment.
-2. **A hard-coded demo API key still exists.** `protocol/security.py` holds
-   `demo-clinician-key` for the agent-layer check used by the CLI path
-   (`main.py`). No HTTP route reaches it — `verify_api_key` in `api.py` is
-   explicitly unused — but the CLI entry point still authenticates through that
-   static key. Replace it with the account system or delete the CLI path.
+2. **The demo CLI key comes from environment, not code.** `auth_cli.py` authenticates the CLI path (`main.py`) using a key read from `DEMO_CLINICIAN_KEY` environment variable (falls back to a throwaway value when unset, so the demo still runs without config). No HTTP route reaches it. Set a strong, unique value in your `.env` before deploying.
 3. **Rate limiting is per worker.** `auth/rate_limit.py` keeps counters in
    process memory, which is correct for the single-process uvicorn this project
    runs. Behind several workers the effective limit multiplies by the worker

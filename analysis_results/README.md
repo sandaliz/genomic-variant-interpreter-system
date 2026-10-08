@@ -29,17 +29,17 @@ model, so no ROC / feature-importance output is produced.
 - **ir_performance.png** — IR metrics: Precision@5, Recall@5, Exact-Match@5, MRR@5
 - **system_architecture.png** — rubric-mapped 4-agent architecture diagram
 
-## Usage for Presentations
+## Usage
 
-### Week 6 Mid Evaluation
+### Data understanding
 - **Data understanding**: `gene_distribution.png`, `variant_types.png`
 - **Problem relevance**: `clinvar_classification_distribution.png` (expert disagreement)
 - **System architecture**: `system_architecture.png`
 
-### Week 10 Final Submission
-- **Gen AI video**: all figures can be used as visual material
+### Evaluation figures
+- **Visual material**: all figures can be used as visual material
 - **Technical report**: use the evaluation figures in the results section
-- **Viva defence**: have `system_architecture.png` and `ir_performance.png` ready
+- **Defence**: have `system_architecture.png` and `ir_performance.png` ready
 
 ### Suggested narrative
 1. `system_architecture.png` — explain the 4-agent design
@@ -51,7 +51,7 @@ model, so no ROC / feature-importance output is produced.
 ## Regenerating Visualizations
 
 ```bash
-source /Users/sandali/projects/.venv/bin/activate
+source .venv/bin/activate
 jupyter notebook analysis.ipynb
 # Run all cells (Cell → Run All) — figures are written to this directory
 ```
@@ -61,7 +61,7 @@ jupyter notebook analysis.ipynb
 The notebook calls `evaluation.py` directly, so the figures and the CLI evaluation
 (`python3 evaluation.py --ground-truth real`) always report the same numbers.
 
-## Note for Grading
+## System notes
 
 - The production system (`main.py`, `api.py`) is the deployable artefact with text metrics
 - The notebook mirrors its algorithms and renders the evidence for presentation

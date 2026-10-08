@@ -4,7 +4,7 @@ protocol/security.py
 Security features:
   - Input sanitization (reject malformed variant queries)
   - Basic authentication (only registered callers can query the system)
-  - Simple symmetric encryption for data in transit between agents
+  - Simple symmetric encryption for data payloads between agents within a process
 
 The implementation is intentionally lightweight to keep the system
 portable while still covering the core security concerns for a
@@ -12,6 +12,7 @@ clinical decision-support prototype.
 """
 
 import hashlib
+import os
 import re
 from cryptography.fernet import Fernet
 
@@ -108,8 +109,13 @@ def validate_gene(gene: str) -> str:
 # ---------- Basic authentication ----------
 
 # Demo-only: in a real system this would be OAuth/JWT against a user DB.
+# The demo key is read from env (DEMO_CLINICIAN_KEY) -- copy .env.example to
+# .env and set it there. If unset, a throwaway fallback keeps the demo running.
+# This is NOT for production -- each restart with the fallback yields a
+# different key, and the hash is only used for the CLI path (main.py).
+_DEMO_API_KEY = os.environ.get("DEMO_CLINICIAN_KEY", "demo-clinician-key")
 _REGISTERED_API_KEYS = {
-    hashlib.sha256(b"demo-clinician-key").hexdigest(): "clinician_demo_user",
+    hashlib.sha256(_DEMO_API_KEY.encode()).hexdigest(): "clinician_demo_user",
 }
 
 
@@ -125,12 +131,13 @@ def authenticate(api_key: str) -> str:
     return _REGISTERED_API_KEYS[hashed]
 
 
-# ---------- Encryption for data "in transit" between agents ----------
+# ---------- Encryption for data payloads between agents in a process ----------
 
 class MessageEncryptor:
     """
     Wraps Fernet symmetric encryption so payloads are encrypted
-    in transit between agents, protecting patient data.
+    within a single process, protecting patient data. The demo key is generated
+    per-process;
     """
 
     def __init__(self, key: bytes = None):

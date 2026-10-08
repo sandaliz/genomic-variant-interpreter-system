@@ -2,14 +2,14 @@
 
 ## Overview
 
-The analysis notebook (`analysis.ipynb`) provides data exploration, model performance visualization, and presentation materials for the Genomic Variant Interpretation System. It complements the production system by offering interactive visualizations and statistical analysis tools.
+The analysis notebook (`analysis.ipynb`) provides data exploration, model-performance visualization, and statistical analysis for the Genomic Variant Interpretation System. It complements the production system with reproducible evaluation artifacts.
 
 ## Purpose
 
 The analysis notebook serves two distinct purposes:
 
 1. **Data Exploration and Research**: Statistical analysis, model training experiments, and information retrieval demonstrations
-2. **Presentation Materials**: High-quality visualizations for assignment presentations, technical reports, and demonstrations
+2. **Evaluation Artifacts**: Reproducible visualizations and statistical summaries for system evaluation
 
 This approach maintains separation between the production system (designed for deployment) and research tools (designed for exploration and presentation).
 
@@ -62,7 +62,7 @@ Running the analysis notebook generates the following visualizations in the `ana
 ### Quick Start
 ```bash
 # Activate the project virtual environment, then open the notebook directly
-source /Users/sandali/projects/.venv/bin/activate
+source .venv/bin/activate
 jupyter notebook analysis.ipynb
 ```
 
@@ -97,8 +97,8 @@ jupyter notebook analysis.ipynb
 - **Use Case**: Production deployment, API integration, automated testing
 
 **Analysis Notebook** (`analysis.ipynb`):
-- **Purpose**: Research, exploration, presentation materials
-- **Output**: Visual graphs, statistical analysis, presentation materials
+- **Purpose**: Research, exploration, and evaluation
+- **Output**: Visual graphs and statistical analysis
 - **Design**: Interactive, exploration-focused, visual output
 - **Use Case**: Data exploration, model development, presentation creation
 

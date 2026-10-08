@@ -14,8 +14,6 @@ lie the dashboard would then repeat in a report.
 """
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
