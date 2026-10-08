@@ -14,28 +14,74 @@ Run:
 
 import os
 import sys
-import json
-from datetime import date, datetime
+import uuid
+from datetime import date, datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from io import BytesIO
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from io import BytesIO, StringIO
+import csv
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from main import VariantInterpretationSystem
 from protocol.security import authenticate, AuthenticationError
+from auth.audit import record
+from auth.dependencies import get_current_user, require_admin
+from auth.schemas import (
+    UpgradeDecision,
+    UpgradeRequestCreate,
+)
+from auth.security import hash_password
+from auth.routes import router as auth_router
+from db.database import get_db
+from db.models import (
+    ALLOWED_ROLES,
+    AuthEvent,
+    Plan,
+    QueryHistory,
+    ReviewSignoff,
+    UPGRADE_STATUSES,
+    UpgradeRequest,
+    UsageRecord,
+    User,
+)
+from services.api_key_service import issue_key, keys_for, revoke_key
+from services.entitlement_service import (
+    check_quota,
+    entitlements,
+    month_start_utc,
+    record_usage,
+    usage_this_month,
+)
+from services.analytics_service import build_analytics, daily_usage_by_user
+from services.history_service import (
+    daily_history_series,
+    history_count,
+    history_for_user,
+    record_history,
+)
+from services.mailer import get_mailer
+from services.upgrade_service import (
+    create_request as upgrade_create,
+    decide,
+    decision_body as upgrade_decision_body,
+    mark_contacted,
+)
 
 
 # ------------------------------------------------------------------
@@ -46,6 +92,9 @@ app = FastAPI(
     description="Multi-agent AI system for BRCA1/BRCA2 variant classification",
     version="1.0.0",
 )
+
+# Account endpoints (/api/auth/*): register, login, me.
+app.include_router(auth_router)
 
 # CORS for the web frontend.
 # Restricted to the local demo origins by default. Set FRONTEND_ORIGINS
@@ -65,45 +114,151 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared system instance (agents are stateless, so this is safe)
-_system = VariantInterpretationSystem(use_llm=True)
+# Shared system instances (agents are stateless, so this is safe). Two
+# variants are pre-built so a per-plan feature gate (LLM on/off) never needs
+# to mutate a shared instance at request time.
+_system_llm = VariantInterpretationSystem(use_llm=True)
+_system_rules = VariantInterpretationSystem(use_llm=False)
+_system = _system_llm  # legacy default: behaves exactly as before
 
-# Demo API key. The frontend sends this explicitly so the authentication step is
-# visible end-to-end; it is NOT injected server-side as a silent fallback.
+
+def _signoff_payload(row: Optional[ReviewSignoff]) -> Optional[dict]:
+    """
+    Serialise a sign-off for the API, or None when there is no row.
+
+    The shape is unchanged from the old JSON store ({reviewer_name, review_date,
+    signature, saved_at}) so the frontend and the PDF report keep working;
+    reviewed_by is added alongside it for the audit trail.
+    """
+    if row is None:
+        return None
+    return {
+        "variant_id": row.variant_id,
+        "reviewer_name": row.reviewer_name,
+        "review_date": row.review_date.isoformat(),
+        "signature": row.signature,
+        "saved_at": row.saved_at.isoformat(timespec="seconds") + "Z",
+        "reviewed_by": row.reviewed_by,
+    }
+
+
+def _history_for(variant_id: str) -> list:
+    """
+    Audit-trail lookup across both system variants.
+
+    Each VariantInterpretationSystem owns its own MessageLog, so a query run
+    under a rules-only plan lands in a different log than an LLM-plan query.
+    Searching both keeps /api/trail and /api/pipeline complete regardless of
+    which plan handled the original request.
+
+    NOTE (known limitation, see SECURITY.md): these logs are process-local
+    and keyed by variant_id only. Ownership scoping to the calling account
+    happens in _history_for_user() below, which intersects this set with the
+    caller's own query_history rows.
+    """
+    seen = {}
+    for system in (_system_llm, _system_rules):
+        for message in system.log.history_for(variant_id):
+            seen[message.message_id] = message
+    return sorted(seen.values(), key=lambda m: str(m.timestamp))
+
+
+def _history_for_user(db: Session, user_id: int, variant_id: str) -> list:
+    """Return only the caller's own runs of this variant.
+
+    The in-memory MessageLog is keyed by variant_id only, so a variant-level
+    membership check is not enough: when two accounts query the same variant,
+    each would receive the other's decrypted payloads and raw_query. Ownership
+    therefore comes from the per-run record -- the trace_id stored on the
+    caller's query_history rows at classify time -- and only messages whose
+    trace_id the caller owns are returned. Rows predating the trace_id column
+    (NULL) can never match, so they read as 404 here: fail-closed.
+    Admins keep the same rule -- the register view is /api/reviews.
+    """
+    own_trace_ids = {
+        row.trace_id
+        for row in db.scalars(
+            select(QueryHistory).where(
+                QueryHistory.user_id == user_id,
+                QueryHistory.variant_id == variant_id,
+            )
+        ).all()
+        if row.trace_id
+    }
+    if not own_trace_ids:
+        return []
+    return [
+        m for m in _history_for(variant_id) if m.trace_id in own_trace_ids
+    ]
+
+# Demo API key used by the agent layer when the API calls into main.py.
+# Review sign-offs live in PostgreSQL (see db/models.py ReviewSignoff), not in a
+# local file, so there is no review store path or in-memory cache any more.
 DEMO_API_KEY = "demo-clinician-key"
-REVIEW_STORE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "review_signoffs.json")
 
-def _load_review_signoffs() -> dict:
-    """Load reviewer sign-off metadata from the local academic prototype store."""
-    try:
-        if os.path.exists(REVIEW_STORE_PATH):
-            with open(REVIEW_STORE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        pass
-    return {}
 
-def _save_review_signoffs(data: dict) -> None:
-    os.makedirs(os.path.dirname(REVIEW_STORE_PATH), exist_ok=True)
-    temp_path = REVIEW_STORE_PATH + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(temp_path, REVIEW_STORE_PATH)
+class UserUpdateRequest(BaseModel):
+    """Fields an administrator may change on another account."""
 
-_REVIEW_SIGNOFFS = _load_review_signoffs()
+    # All optional so a PATCH touches only what was sent. Unknown fields are
+    # rejected by pydantic rather than silently ignored, which stops a typo in a
+    # client's payload from looking like it worked.
+    plan_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    role: Optional[str] = None
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    plan: str
+    plan_id: int
+    created_at: Optional[str] = None
+    used_this_month: int
 
 
 # ------------------------------------------------------------------
 # Request/Response models
 # ------------------------------------------------------------------
+class UsageInfo(BaseModel):
+    used_this_month: int
+    monthly_limit: Optional[int] = None
+    remaining: Optional[int] = None
+
+
+class EntitlementInfo(BaseModel):
+    llm_enabled: bool
+    api_access: bool
+    audit_export: bool
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., description="Free-text query, e.g. 'Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?'")
+    # Accepted for backwards compatibility with the pre-JWT API, but ignored:
+    # authentication is the Authorization: Bearer token, and the agent layer
+    # uses its own credential internally.
     api_key: Optional[str] = Field(
         None,
         description=(
-            "Optional API key. Preferred transport is the X-API-Key header. "
-            "Required either way - requests without a valid key are rejected with 401."
+            "Deprecated and ignored. Authentication is the JWT sent in the "
+            "Authorization: Bearer header."
+        ),
+    )
+    idempotency_key: Optional[str] = Field(
+        None,
+        max_length=64,
+        description=(
+            "Optional. Send the same key when retrying a request you are not "
+            "sure landed, and the retry is charged once instead of twice. Omit "
+            "it and every accepted call is billed separately, even if the query "
+            "text is identical to a previous one."
         ),
     )
 
@@ -124,6 +279,20 @@ class FullPipelineResponse(BaseModel):
     population_observation: Optional[str] = None
     pipeline_steps: list
     audit_trail: list
+    # Agentic control plane: the Supervisor's plan and the Verifier's verdict (and
+    # how many revision rounds were spent), so an API consumer can see the
+    # system's reasoning about its own run, not only its results.
+    agentic: Optional[dict] = None
+    # The inputs the confidence score was built from (evidence strength,
+    # submitter consistency, supporting records, predictor agreement). Exposed so
+    # the UI can show *why* a number is what it is -- the report text has always
+    # carried this breakdown, but a client rendering its own view could not.
+    confidence_components: Optional[dict] = None
+    # Whether the Verifier capped the scorer's number, and what it was before
+    # the cap. The component bars describe pre-cap inputs; without these the UI
+    # shows full bars next to a lowered headline with no explanation.
+    confidence_revised: bool = False
+    confidence_before_revision: Optional[float] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -140,6 +309,9 @@ class FullPipelineResponse(BaseModel):
     review_required: bool = False
     coverage_fallback: bool = False
     evidence_limitation: Optional[str] = None
+    plan: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    entitlements: Optional[EntitlementInfo] = None
 
 
 class PDFReportRequest(BaseModel):
@@ -182,6 +354,19 @@ class QueryResponse(BaseModel):
     population_observation: Optional[str] = None
     pipeline_steps: list
     audit_trail: list
+    # Agentic control plane: the Supervisor's plan and the Verifier's verdict (and
+    # how many revision rounds were spent), so an API consumer can see the
+    # system's reasoning about its own run, not only its results.
+    agentic: Optional[dict] = None
+    # The inputs the confidence score was built from (evidence strength,
+    # submitter consistency, supporting records, predictor agreement). Exposed so
+    # the UI can show *why* a number is what it is -- the report text has always
+    # carried this breakdown, but a client rendering its own view could not.
+    confidence_components: Optional[dict] = None
+    # Same revision provenance as QueryHistoryResult, so a re-opened run keeps
+    # its "lowered from X" explanation instead of reverting to bare bars.
+    confidence_revised: bool = False
+    confidence_before_revision: Optional[float] = None
     top_k_results: list
     ir_metadata: dict
     responsible_ai: dict
@@ -198,19 +383,43 @@ class QueryResponse(BaseModel):
     review_required: bool = False
     coverage_fallback: bool = False
     evidence_limitation: Optional[str] = None
+    # Entitlement context, so the UI can show the plan and the remaining quota
+    # without a second round-trip to /api/auth/me.
+    plan: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    entitlements: Optional[EntitlementInfo] = None
 
 
 # ------------------------------------------------------------------
-# API key dependency
+# Legacy agent-layer API key dependency
 # ------------------------------------------------------------------
 def verify_api_key(x_api_key: str = Header(None)):
+    """
+    Verify an agent-layer API key (X-API-Key header).
+
+    No route uses this any more -- every endpoint authenticates with a JWT
+    account token instead. It is kept because it is the exact check the
+    pipeline still performs internally (main.py -> authenticate()), so it is
+    the reference implementation of that boundary and stays testable.
+    """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
     try:
-        user = authenticate(x_api_key)
-        return user
+        return authenticate(x_api_key)
     except AuthenticationError as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+
+# app.css and app.js are served from here rather than inlined, so the frontend is
+# three reviewable files instead of one very long one. Nothing else is exposed.
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+# URL slug -> view id. Kept beside the route handler so the client and the server
+# agree on what is a real page rather than a typo. One slug per view: a second
+# alias would render a view at a URL the client cannot map back.
+FRONTEND_VIEWS = {"profile", "admin-dashboard", "analyse"}
 
 
 # ------------------------------------------------------------------
@@ -219,10 +428,32 @@ def verify_api_key(x_api_key: str = Header(None)):
 @app.get("/")
 async def root():
     """Serve the web frontend."""
-    frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "index.html")
+    frontend_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
     return {"message": "Genomic Variant Interpretation API. See /docs for API documentation."}
+
+
+# The frontend is a single document with four views switched by a `hidden`
+# class, so a deep link like /admin-dashboard has to be answered with that same
+# document -- the script then reads window.location.pathname and shows the right
+# view. Without these, refreshing a deep link 404s and the views are
+# unreachable by URL.
+@app.get("/{page}", include_in_schema=False)
+async def frontend_deep_link(page: str):
+    """
+    Serve the single-page frontend for the known view routes.
+
+    Only the four view slugs resolve. Anything else is a genuine 404 rather than
+    the frontend shell, so a typo in an API path still fails loudly instead of
+    quietly returning HTML to something expecting JSON.
+    """
+    slug = page.strip("/").lower()
+    if slug in FRONTEND_VIEWS:
+        frontend_path = os.path.join(FRONTEND_DIR, "index.html")
+        if os.path.exists(frontend_path):
+            return FileResponse(frontend_path)
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/health")
@@ -233,14 +464,18 @@ async def health():
 
 
 @app.post("/api/classify", response_model=QueryResponse)
-async def classify(request: QueryRequest, x_api_key: str = Header(None)):
+def classify(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Classify a genetic variant through the full 4-agent pipeline.
 
-    Requires an API key, supplied either as an ``X-API-Key`` header (preferred,
-    and what the web frontend sends) or as the ``api_key`` body field. There is
-    no server-side fallback key: an unauthenticated request is rejected with 401
-    so the authentication step is genuinely enforced.
+    Requires a JWT account token (``Authorization: Bearer <token>``); an
+    unauthenticated request is rejected with 401. The account's plan decides
+    whether LLM-assisted reasoning is used, and its monthly quota is checked
+    before any agent work starts.
 
     Example:
     {
@@ -249,25 +484,56 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
 
     Returns the full pipeline result including extracted entities,
     top-K evidence with relevance scores, classification, confidence,
-    audit trail, and the final report.
+    audit trail, the final report, and the caller's plan/usage/entitlements.
     """
-    # --- Security: authenticate BEFORE any agent runs ---
-    api_key = x_api_key or request.api_key
-    if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "Missing API key. Send an X-API-Key header "
-                f"(demo key: {DEMO_API_KEY})."
-            ),
-        )
+    # --- Security + entitlements: authenticated user, plan gate, quota ---
+    info = check_quota(db, current_user)
+    llm_allowed = bool(info["llm_enabled"])
+    system = _system_llm if llm_allowed else _system_rules
+    # One billable request per accepted call.
+    #
+    # This used to be uuid5(user_id + query text), which conflated "the same
+    # request" with "the same words". Repeating a query was therefore free --
+    # and because UsageRecord.request_id is globally unique with no month in
+    # it, a query could be run once and then repeated free in every month
+    # thereafter. The unique constraint still earns its keep for genuine
+    # retries, so it is kept, but only where the client opts in.
+    if request.idempotency_key and request.idempotency_key.strip():
+        month_key = month_start_utc().strftime("%Y-%m")
+        request_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{current_user.id}:{month_key}:{request.idempotency_key.strip()}",
+        ))
+    else:
+        request_id = str(uuid.uuid4())
 
-    result = _system.run(request.query, api_key)
+    # The agent layer keeps its own credential check as defence-in-depth: JWT ran
+    # at the edge above, and main.py still refuses untrusted callers.
+    result = system.run(request.query, DEMO_API_KEY, user_id=str(current_user.id))
 
     if "error" in result:
-        # Distinguish authentication failures (401) from bad queries (400)
-        status = 401 if str(result["error"]).startswith("Access denied") else 400
-        raise HTTPException(status_code=status, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    # Record the accepted call. record_usage() re-verifies the quota inside the
+    # same transaction that writes the row, so concurrent requests cannot both
+    # pass the pre-check and overshoot the plan limit.
+    record_usage(
+        db,
+        current_user.id,
+        request_id,
+        current_user.plan.monthly_query_limit,
+    )
+    # The account's own reading list. Best-effort by design: the report above is
+    # already produced and valid, and losing a convenience row must not turn a
+    # successful classification into an error response.
+    record_history(db, current_user.id, request_id, request.query, result)
+    ent = entitlements(current_user, usage_this_month(db, current_user.id))
+
+    # The report response carries the sign-off inline so the UI can render the
+    # review banner without a second request.
+    db_signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == result["variant_id"])
+    ).one_or_none()
 
     return QueryResponse(
         variant_id=result["variant_id"],
@@ -283,13 +549,19 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
         population_observation=result.get("population_observation"),
         pipeline_steps=result["pipeline_steps"],
         audit_trail=result["audit_trail"],
+        agentic=result.get("agentic"),
+        confidence_components=result.get("confidence_components"),
+        confidence_revised=result.get("confidence_revised", False),
+        confidence_before_revision=result.get("confidence_before_revision"),
         top_k_results=result["top_k_results"],
         ir_metadata=result["ir_metadata"],
         responsible_ai=result["responsible_ai"],
         intent=result["intent"],
         extracted_entities=result["extracted_entities"],
         reasoning_mode=result.get("reasoning_mode", "rule_based"),
-        review_signoff=_REVIEW_SIGNOFFS.get(result["variant_id"]),
+        # Sign-offs come from PostgreSQL now, so this is a lookup rather than a
+        # dict hit. A missing row simply means "not yet signed off".
+        review_signoff=_signoff_payload(db_signoff),
         is_gene_overview=result.get("is_gene_overview", False),
         total_variants_in_gene=result.get("total_variants_in_gene"),
         rsid_lookup_unsupported=result.get("rsid_lookup_unsupported", False),
@@ -298,15 +570,33 @@ async def classify(request: QueryRequest, x_api_key: str = Header(None)):
         review_required=result.get("review_required", False),
         coverage_fallback=result.get("coverage_fallback", False),
         evidence_limitation=result.get("evidence_limitation"),
+        plan=current_user.plan.name,
+        usage=UsageInfo(
+            used_this_month=ent["used_this_month"],
+            monthly_limit=ent["monthly_limit"],
+            remaining=ent["remaining"],
+        ),
+        entitlements=EntitlementInfo(
+            llm_enabled=ent["llm_enabled"],
+            api_access=ent["api_access"],
+            audit_export=ent["audit_export"],
+        ),
     )
 
 
 @app.post("/api/review/{variant_id}")
-async def save_review_signoff(variant_id: str, request: ReviewSignoffRequest):
-    """Persist human-review metadata for a generated variant report.
+def save_review_signoff(
+    variant_id: str,
+    request: ReviewSignoffRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Record (or update) a genetic counselor's sign-off for a variant.
 
-    This is intentionally a small local JSON store for the academic prototype;
-    it is not a production clinical records system.
+    Stored in PostgreSQL rather than a local file so the attestation has an
+    accountable owner (reviewed_by), survives restarts and can be listed for
+    audit. One sign-off per variant; re-signing updates the row in place.
     """
     try:
         parsed_date = date.fromisoformat(request.review_date)
@@ -315,31 +605,96 @@ async def save_review_signoff(variant_id: str, request: ReviewSignoffRequest):
     if parsed_date > date.today():
         raise HTTPException(status_code=422, detail="review_date cannot be in the future")
 
-    signoff = {
-        "reviewer_name": request.reviewer_name.strip(),
-        "review_date": request.review_date,
-        "signature": request.signature.strip() if request.signature else None,
-        "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-    }
-    _REVIEW_SIGNOFFS[variant_id] = signoff
-    try:
-        _save_review_signoffs(_REVIEW_SIGNOFFS)
-    except OSError as exc:
-        # Container hosts may have an ephemeral or read-only filesystem;
-        # keep the sign-off for this process rather than failing the request.
-        print(f"[review] persist skipped: {exc}")
-    return {"variant_id": variant_id, "review_signoff": signoff}
+    reviewer = request.reviewer_name.strip()
+    if not reviewer:
+        raise HTTPException(status_code=422, detail="reviewer_name cannot be blank")
+
+    signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == variant_id)
+    ).one_or_none()
+    if signoff is None:
+        signoff = ReviewSignoff(variant_id=variant_id)
+        db.add(signoff)
+    signoff.reviewer_name = reviewer
+    signoff.review_date = parsed_date
+    # A whitespace-only signature is treated as "not signed", not as a blank
+    # string that would render as an empty signature line in the PDF.
+    signoff.signature = (request.signature or "").strip() or None
+    signoff.saved_at = datetime.now(timezone.utc)
+    # Ownership is rewritten on every save, so "which account recorded this"
+    # always reflects the most recent sign-off.
+    signoff.reviewed_by = current_user.id
+    db.commit()
+    db.refresh(signoff)
+    return {"variant_id": variant_id, "review_signoff": _signoff_payload(signoff)}
 
 
 @app.get("/api/review/{variant_id}")
-async def get_review_signoff(variant_id: str):
-    """Return stored human-review metadata for a variant, if present."""
-    return {"variant_id": variant_id, "review_signoff": _REVIEW_SIGNOFFS.get(variant_id)}
+def get_review_signoff(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the stored sign-off for a variant, or null when none exists."""
+    signoff = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == variant_id)
+    ).one_or_none()
+    return {"variant_id": variant_id,
+            "review_signoff": _signoff_payload(signoff) if signoff else None}
+
+
+@app.get("/api/reviews")
+def list_review_signoffs(
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    List recorded sign-offs, newest first.
+
+    Admin-only: this is an attestation register rather than a per-caller view,
+    so it sits behind the same role check as the account listing.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    rows = db.scalars(
+        select(ReviewSignoff).order_by(ReviewSignoff.saved_at.desc()).limit(limit)
+    ).all()
+    return {"total": len(rows),
+            "review_signoffs": [_signoff_payload(row) for row in rows]}
+
+
+def _pdf_text(value) -> str:
+    """Escape a caller- or database-supplied string for ReportLab markup.
+
+    ReportLab Paragraphs interpret a small HTML subset (<b>, <i>, <br/>),
+    so an unescaped ``<script>`` or stray ``<`` in variant_id / reviewer
+    fields would be parsed as markup. The criteria/annotation/context rows
+    below already escape inline; this helper applies the same rule to the
+    header and sign-off fields so every interpolated value is treated as
+    literal text.
+    """
+    return (
+        str(value if value is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 @app.post("/api/report/pdf")
-async def create_pdf_report(request: PDFReportRequest):
-    """Create a print-ready academic clinical-style report PDF."""
+async def create_pdf_report(
+    request: PDFReportRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a print-ready academic clinical-style report PDF.
+
+    Authenticated like every other per-account endpoint: a caller must prove
+    who they are, and the stored sign-off lookup below is scoped by variant,
+    so anonymous PDF generation (and anonymous enumeration of reviewer
+    names/signatures by variant_id) is refused with 401.
+    """
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42,
@@ -360,10 +715,15 @@ async def create_pdf_report(request: PDFReportRequest):
     story = [
         Paragraph("Genomic Variant Interpretation Report", title),
         Paragraph("VariantLens · IT3041 academic decision-support prototype", subtitle),
-        Paragraph(f"<b>Variant:</b> {request.variant_id}", body),
+        Paragraph(f"<b>Variant:</b> {_pdf_text(request.variant_id)}", body),
         Spacer(1, 8),
     ]
-    stored_signoff = _REVIEW_SIGNOFFS.get(request.variant_id, {})
+    pdf_row = db.scalars(
+        select(ReviewSignoff).where(ReviewSignoff.variant_id == request.variant_id)
+    ).one_or_none()
+    stored_signoff = _signoff_payload(pdf_row) if pdf_row else {}
+    # Values typed into the form win over the stored sign-off, so a reviewer can
+    # correct a date without re-saving the record first.
     reviewer_name = request.reviewer_name or stored_signoff.get("reviewer_name")
     review_date = request.review_date or stored_signoff.get("review_date")
     signature = request.signature or stored_signoff.get("signature")
@@ -449,9 +809,9 @@ async def create_pdf_report(request: PDFReportRequest):
         story.append(et)
     story += [
         Paragraph("Review / sign-off", h2),
-        Paragraph(f"Reviewer / genetic counselor: {reviewer_name or '________________________________'}", body),
+        Paragraph(f"Reviewer / genetic counselor: {_pdf_text(reviewer_name) if reviewer_name else '________________________________'}", body),
         Spacer(1, 8),
-        Paragraph(f"Review date: {review_date or '__________________'}    Signature: {signature or '_______________________________'}", body),
+        Paragraph(f"Review date: {_pdf_text(review_date) if review_date else '__________________'}    Signature: {_pdf_text(signature) if signature else '_______________________________'}", body),
         Spacer(1, 14),
         Paragraph("<b>Important:</b> This document is generated by an academic decision-support prototype. "
                   "Classification confidence is not medical certainty. It does not provide a medical diagnosis, "
@@ -473,12 +833,21 @@ async def create_pdf_report(request: PDFReportRequest):
 
 
 @app.get("/api/pipeline/{variant_id}")
-async def get_pipeline(variant_id: str, user: str = Depends(verify_api_key)):
+def get_pipeline(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Get the full pipeline result and audit trail for a previously queried variant.
-    Requires X-API-Key header.
+    Requires a valid JWT (Authorization: Bearer).
+
+    Scoped to the caller's own runs by trace_id: a variant another account
+    queried -- or the same variant queried by two accounts -- returns only the
+    caller's own messages here, so no account can read another account's
+    decrypted payloads or raw_query.
     """
-    messages = _system.log.history_for(variant_id)
+    messages = _history_for_user(db, current_user.id, variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No pipeline data found for {variant_id}")
 
@@ -501,9 +870,16 @@ async def get_pipeline(variant_id: str, user: str = Depends(verify_api_key)):
 
 
 @app.get("/api/trail/{variant_id}")
-async def get_trail(variant_id: str, user: str = Depends(verify_api_key)):
-    """Get the full agent-to-agent message audit trail for a variant."""
-    messages = _system.log.history_for(variant_id)
+def get_trail(
+    variant_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the full agent-to-agent message audit trail for a variant.
+
+    Same ownership rule as /api/pipeline: only the caller's own runs.
+    """
+    messages = _history_for_user(db, current_user.id, variant_id)
     if not messages:
         raise HTTPException(status_code=404, detail=f"No trail found for {variant_id}")
     return [
@@ -521,6 +897,664 @@ async def get_trail(variant_id: str, user: str = Depends(verify_api_key)):
         }
         for m in messages
     ]
+
+
+def _admin_user_payload(db: Session, user: User) -> dict:
+    """Serialise an account for the admin endpoints. Never includes a hash."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "plan": user.plan.name,
+        "plan_id": user.plan_id,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "used_this_month": usage_this_month(db, user.id),
+    }
+
+
+def _active_admin_count(db: Session, exclude_user_id: Optional[int] = None) -> int:
+    """
+    Count active administrators other than one account.
+
+    Used to refuse a change that would leave the deployment with no way back
+    in: without an admin, the only fix is a direct database shell.
+    """
+    query = select(func.count(User.id)).where(User.role == "admin", User.is_active.is_(True))
+    if exclude_user_id is not None:
+        query = query.where(User.id != exclude_user_id)
+    return int(db.scalar(query) or 0)
+
+
+def _upgrade_payload(request: UpgradeRequest) -> dict:
+    """Serialise an upgrade request as the requesting user sees it."""
+    return {
+        "id": request.id,
+        "target_plan": request.target_plan.name,
+        "target_plan_id": request.target_plan_id,
+        "note": request.note,
+        "status": request.status,
+        "admin_note": request.admin_note,
+        "created_at": request.created_at.isoformat() if request.created_at else None,
+        "decided_at": request.decided_at.isoformat() if request.decided_at else None,
+    }
+
+
+@app.post("/api/upgrade-requests", status_code=status.HTTP_201_CREATED)
+def create_upgrade_request(
+    body: UpgradeRequestCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Ask to move to a paid plan.
+
+    This does not change the plan -- it puts the request in front of an
+    administrator, who decides. The user keeps their current (working) plan and
+    quota until then, which is the point: nobody loses access while waiting.
+    """
+    request = upgrade_create(db, current_user, body.target_plan_id, body.note)
+    return _upgrade_payload(request)
+
+
+@app.get("/api/upgrade-requests/mine")
+def my_upgrade_requests(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """This account's upgrade history, newest first."""
+    rows = db.scalars(
+        select(UpgradeRequest)
+        .where(UpgradeRequest.user_id == current_user.id)
+        .order_by(UpgradeRequest.created_at.desc())
+    ).all()
+    return {"total": len(rows),
+            "requests": [_upgrade_payload(r) for r in rows]}
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics(
+    days: int = 30,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Dashboard figures: accounts, query volume, plan mix, upgrade queue, sign-offs.
+
+    Everything is counted live from the same tables the rest of the app writes,
+    so a number here can never drift from the data it describes.
+    """
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
+    return build_analytics(db, days)
+
+
+@app.get("/api/admin/upgrade-requests")
+def admin_list_upgrade_requests(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    The upgrade queue for administrators.
+
+    Includes the requester's name and email: the hand-off is a conversation, so
+    the admin needs to know who to reply to, not just what was asked for.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    query = select(UpgradeRequest).order_by(UpgradeRequest.created_at.desc())
+    if status_filter:
+        if status_filter not in UPGRADE_STATUSES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"status must be one of: {', '.join(UPGRADE_STATUSES)}")
+        query = query.where(UpgradeRequest.status == status_filter)
+    rows = db.scalars(query.limit(limit)).all()
+
+    return {
+        "total": len(rows),
+        "requests": [
+            {
+                **_upgrade_payload(r),
+                "user_id": r.user_id,
+                "username": r.user.username,
+                "email": r.user.email,
+                "current_plan": r.user.plan.name,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.patch("/api/admin/upgrade-requests/{request_id}")
+def admin_decide_upgrade_request(
+    request_id: int,
+    body: UpgradeDecision,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Approve, decline, or mark a request as contacted.
+
+    Approving applies the plan change in the same transaction as the decision,
+    so the two can never disagree. The requester is emailed either way.
+    """
+    row = db.get(UpgradeRequest, request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Upgrade request not found.")
+
+    decision = body.status.strip().lower()
+    if decision == "contacted":
+        row = mark_contacted(db, row, body.admin_note)
+    else:
+        row = decide(db, row, decision, body.admin_note)
+        # Tell the requester. A decision the user never hears about is not a
+        # hand-off.
+        get_mailer().send(
+            to_email=row.user.email,
+            subject=f"Your VariantLens upgrade request was {row.status}",
+            body=upgrade_decision_body(row, row.target_plan.name,
+                                       row.user.username),
+        )
+
+    return {
+        "request": {**_upgrade_payload(row),
+                    "user_id": row.user_id,
+                    "username": row.user.username,
+                    "email": row.user.email,
+                    "current_plan": row.user.plan.name},
+    }
+
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Account listing for administrators. Password material is never returned."""
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+    users = db.scalars(select(User).order_by(User.id).limit(limit)).all()
+    return {"total": len(users),
+            "users": [_admin_user_payload(db, u) for u in users]}
+
+
+@app.get("/api/admin/accounts/activity")
+def admin_account_activity(
+    days: int = 30,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-account query activity for the dashboard's accounts table.
+
+    One call, every account: the table draws a sparkline per row, and fetching a
+    series per row would turn one screen into N round-trips. Accounts with no
+    usage in the window are absent from ``accounts`` rather than present with
+    zeros -- the caller renders an empty sparkline, and absence here is a real
+    signal (nothing ran) rather than a fetch that failed.
+
+    Kept as its own endpoint rather than added to ``/api/admin/analytics`` so the
+    existing dashboard payload keeps exactly the shape its consumers expect.
+    """
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
+    return {"window_days": days, "accounts": daily_usage_by_user(db, days)}
+
+
+@app.get("/api/admin/accounts/{account_id}/history")
+def admin_account_history(
+    account_id: int,
+    limit: int = Query(50, description="How many recent runs to return (1-200)."),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    One account's actual query log, for the administrator's drill-down.
+
+    Reading this is an audited action: it exposes what a person asked, so the
+    read is recorded against the administrator who made it in the same way a
+    privilege change is. The response carries the account's 30-day series as well,
+    so opening a row is one request rather than two.
+    """
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    account = db.get(User, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    record(db, "admin_read_history", user_id=account.id,
+           actor_user_id=current_user.id,
+           detail=f"read query history for {account.username}")
+
+    return {
+        "account": {
+            "id": account.id,
+            "username": account.username,
+            "email": account.email,
+            "plan": account.plan.name if account.plan else None,
+        },
+        "total": history_count(db, account.id),
+        "history": history_for_user(db, account.id, limit),
+        "daily": daily_history_series(db, account.id, 30),
+    }
+
+
+@app.get("/api/admin/plans")
+def admin_list_plans(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Plan catalogue with subscriber counts, for the admin dashboard."""
+    plans = db.scalars(select(Plan).order_by(Plan.id)).all()
+    return {
+        "total": len(plans),
+        "plans": [
+            {
+                "id": plan.id,
+                "name": plan.name,
+                "price_cents": plan.price_cents,
+                "monthly_query_limit": plan.monthly_query_limit,
+                "is_unlimited": plan.is_unlimited,
+                "llm_enabled": plan.llm_enabled,
+                "api_access": plan.api_access,
+                "audit_export": plan.audit_export,
+                "subscribers": int(db.scalar(
+                    select(func.count(User.id)).where(User.plan_id == plan.id)
+                ) or 0),
+            }
+            for plan in plans
+        ],
+    }
+
+
+@app.get("/api/plans")
+def list_plans(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Plan catalogue for any signed-in account.
+
+    The admin dashboard has its own richer version of this at
+    /api/admin/plans, which additionally exposes subscriber counts. A
+    regular user needs the catalogue too -- otherwise the profile page has
+    nothing to compare their plan against and no way to request an upgrade.
+    """
+    plans = db.scalars(select(Plan).order_by(Plan.id)).all()
+    return {
+        "total": len(plans),
+        "plans": [
+            {
+                "id": plan.id,
+                "name": plan.name,
+                "price_cents": plan.price_cents,
+                "monthly_query_limit": plan.monthly_query_limit,
+                "is_unlimited": plan.is_unlimited,
+                "llm_enabled": plan.llm_enabled,
+                "api_access": plan.api_access,
+                "audit_export": plan.audit_export,
+            }
+            for plan in plans
+        ],
+    }
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_update_user(
+    user_id: int,
+    body: UserUpdateRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Change another account's plan, active state or role.
+
+    Two guards matter here, and both exist because this endpoint is the one
+    place a token holder can gain or lose reach:
+      * an admin cannot change their own role or active state, so a session
+        cannot lock its own owner out;
+      * a change that would remove the last active administrator is refused,
+        because after that nobody could administer the deployment through the
+        API at all.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    if body.role is not None and body.role not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"role must be one of: {', '.join(ALLOWED_ROLES)}")
+
+    demoting_or_disabling_admin = (
+        target.role == "admin"
+        and ((body.role is not None and body.role != "admin")
+             or body.is_active is False)
+    )
+    if demoting_or_disabling_admin and _active_admin_count(db, exclude_user_id=target.id) == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Refusing to remove the last active administrator. "
+                   "Promote another admin first.")
+
+    self_change = (
+        (body.role is not None and body.role != current_user.role)
+        or body.is_active is not None and body.is_active != current_user.is_active
+    )
+    if target.id == current_user.id and self_change:
+        raise HTTPException(
+            status_code=400,
+            detail="An administrator cannot change their own role or active state.")
+
+    previous_plan_id = target.plan_id
+    previous_is_active = target.is_active
+    previous_role = target.role
+
+    if body.plan_id is not None:
+        plan = db.get(Plan, body.plan_id)
+        if plan is None:
+            raise HTTPException(status_code=422, detail="Unknown plan_id.")
+        target.plan_id = plan.id
+    if body.is_active is not None:
+        target.is_active = body.is_active
+    if body.role is not None:
+        target.role = body.role
+
+    db.commit()
+    db.refresh(target)
+
+    # One event per attribute that actually changed. Recording all three
+    # unconditionally would bury the real change in noise, and recording none
+    # would make a privilege escalation indistinguishable from a no-op call.
+    if body.plan_id is not None and target.plan_id != previous_plan_id:
+        record(db, "plan_changed", user_id=target.id, actor_user_id=current_user.id,
+               detail=f"{previous_plan_id} -> {target.plan_id}")
+    if body.is_active is not None and target.is_active != previous_is_active:
+        record(db, "account_activated" if target.is_active
+               else "account_deactivated",
+               user_id=target.id, actor_user_id=current_user.id)
+    if body.role is not None and target.role != previous_role:
+        record(db, "role_changed", user_id=target.id, actor_user_id=current_user.id,
+               detail=f"{previous_role} -> {target.role}")
+
+    return {"user": _admin_user_payload(db, target)}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+def admin_reset_password(
+    user_id: int,
+    body: PasswordResetRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Reset another account's password.
+
+    An administrator may also reset their own password this way if they have
+    somehow lost the current one. Any token the target already holds stays valid
+    until it expires -- password reset revokes the credential, not the session.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+    target.password_hash = hash_password(body.new_password)
+    db.commit()
+    record(db, "admin_password_reset", user_id=target.id,
+           actor_user_id=current_user.id)
+    # The response deliberately says nothing beyond the outcome: never echo the
+    # new password, and never return the hash.
+    return {"reset": True, "username": target.username}
+
+
+@app.get("/api/history")
+def my_history(
+    limit: int = Query(20, description="How many recent runs to return (1-50)."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    The caller's own recent runs, newest first.
+
+    Deliberately available on every plan and not entitlement-gated: reading back
+    what you asked is not a premium feature, and the row count is small. It
+    returns only the caller's own rows, so it cannot be used to enumerate another
+    account's work, and it stores no report text -- reopening a run re-runs it
+    against current evidence rather than replaying a stale answer.
+
+    ``daily`` carries the same gap-filled 30-day series the admin dashboard draws,
+    so the workspace can show the account its own activity without a second call.
+    """
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 50")
+    return {
+        "total": history_count(db, current_user.id),
+        "history": history_for_user(db, current_user.id, limit),
+        "daily": daily_history_series(db, current_user.id, 30),
+    }
+
+
+@app.get("/api/export/audit")
+def export_audit(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    start: Optional[str] = Query(
+        None, description="Earliest date to include, ISO 8601 (YYYY-MM-DD)."),
+    end: Optional[str] = Query(
+        None, description="Latest date to include, ISO 8601 (YYYY-MM-DD), inclusive."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Export the caller's own audit record (usage, sign-offs, auth events).
+
+    This is the endpoint behind the "Audit export" line on the Professional and
+    Enterprise plans, so it is gated by the ``audit_export`` entitlement rather
+    than merely advertised. It deliberately returns only the caller's own rows --
+    an account can audit itself, never another account.
+
+    ``format=csv`` returns a flat, spreadsheet-friendly file; ``format=json``
+    returns the same rows with their full field set.
+
+    ``start`` and ``end`` narrow the export to a date window. This is the normal
+    shape of a compliance request ("give me the quarter"), and filtering on the
+    server keeps the file faithful to the range that was asked for instead of
+    sending everything and trusting the caller to trim it.
+    """
+    if not current_user.plan.audit_export:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Audit export is not included in your plan. Upgrade to "
+                   "Professional or Enterprise to enable it.",
+        )
+
+    def _parse_bound(value: str, is_end: bool) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date '{value}'. Use ISO 8601, e.g. 2026-07-01.",
+            )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        # A bare date means a whole day, so `end=2026-09-30` must still include
+        # the rows written on the 30th rather than stopping at midnight.
+        if is_end and len(value.strip()) <= 10:
+            parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+        return parsed
+
+    lower = _parse_bound(start, False) if start else None
+    upper = _parse_bound(end, True) if end else None
+
+    def _in_window(row, attr: str) -> bool:
+        stamp = getattr(row, attr)
+        if stamp is None:
+            return True
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if lower is not None and stamp < lower:
+            return False
+        if upper is not None and stamp > upper:
+            return False
+        return True
+
+    usage_rows = db.scalars(
+        select(UsageRecord)
+        .where(UsageRecord.user_id == current_user.id)
+        .order_by(UsageRecord.created_at)
+    ).all()
+    signoff_rows = db.scalars(
+        select(ReviewSignoff)
+        .where(ReviewSignoff.reviewed_by == current_user.id)
+        .order_by(ReviewSignoff.saved_at)
+    ).all()
+    event_rows = db.scalars(
+        select(AuthEvent)
+        .where(AuthEvent.user_id == current_user.id)
+        .order_by(AuthEvent.created_at)
+    ).all()
+
+    if lower is not None or upper is not None:
+        usage_rows = [row for row in usage_rows if _in_window(row, "created_at")]
+        signoff_rows = [row for row in signoff_rows if _in_window(row, "saved_at")]
+        event_rows = [row for row in event_rows if _in_window(row, "created_at")]
+
+    if format == "csv":
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["section", "timestamp", "detail"])
+        for row in usage_rows:
+            writer.writerow([
+                "usage",
+                row.created_at.isoformat(),
+                f"{row.query_count} query"
+                + (f", {row.llm_tokens_used} tokens" if row.llm_tokens_used else ""),
+            ])
+        for row in signoff_rows:
+            writer.writerow([
+                "review_signoff",
+                row.saved_at.isoformat(),
+                f"{row.variant_id} by {row.reviewer_name} on {row.review_date.isoformat()}",
+            ])
+        for row in event_rows:
+            writer.writerow([
+                "auth_event",
+                row.created_at.isoformat(),
+                f"{row.event_type} ({'ok' if row.succeeded else 'failed'})"
+                + (f": {row.detail}" if row.detail else ""),
+            ])
+        filename = f"variantlens-audit-{current_user.username}.csv"
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    return {
+        "user": current_user.username,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        # Echo the window back, so the file explains its own scope when it is
+        # opened months later by someone who did not run the export.
+        "range": {"start": start, "end": end},
+        "usage": [
+            {
+                "created_at": row.created_at.isoformat(),
+                "query_count": row.query_count,
+                "llm_tokens_used": row.llm_tokens_used,
+            }
+            for row in usage_rows
+        ],
+        "review_signoffs": [
+            {
+                "variant_id": row.variant_id,
+                "reviewer_name": row.reviewer_name,
+                "review_date": row.review_date.isoformat(),
+                "saved_at": row.saved_at.isoformat(),
+            }
+            for row in signoff_rows
+        ],
+        "auth_events": [
+            {
+                "event_type": row.event_type,
+                "created_at": row.created_at.isoformat(),
+                "succeeded": row.succeeded,
+                "detail": row.detail,
+                "client_ip": row.client_ip,
+            }
+            for row in event_rows
+        ],
+    }
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80,
+                      description="A label so the user can tell keys apart, e.g. 'LIMS integration'.")
+
+
+def _api_key_payload(row) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "prefix": row.prefix,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        "revoked": row.revoked_at is not None,
+    }
+
+
+@app.post("/api/keys", status_code=status.HTTP_201_CREATED)
+def create_api_key(
+    body: ApiKeyCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Mint an API key for programmatic access.
+
+    Requires the plan's ``api_access`` entitlement (Professional/Enterprise). The
+    plaintext key is returned **once** in the ``key`` field and never stored --
+    only its digest is persisted -- so if it is lost it must be revoked and
+    replaced rather than recovered.
+    """
+    if not current_user.plan.api_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API access is not included in your plan. Upgrade to "
+                   "Professional or Enterprise to create API keys.",
+        )
+    row, raw = issue_key(db, current_user, body.name)
+    return {**_api_key_payload(row), "key": raw}
+
+
+@app.get("/api/keys")
+def list_api_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    List the caller's API keys (metadata only, never the secret).
+
+    Readable regardless of plan so that an account which has downgraded can still
+    see and revoke the keys it created while it was entitled.
+    """
+    rows = keys_for(db, current_user)
+    return {"total": len(rows), "keys": [_api_key_payload(row) for row in rows]}
+
+
+@app.delete("/api/keys/{key_id}")
+def revoke_api_key(
+    key_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke one of the caller's own API keys. Idempotent-safe: 404 if unknown."""
+    if not revoke_key(db, current_user, key_id):
+        raise HTTPException(status_code=404, detail="API key not found or already revoked.")
+    return {"revoked": True, "id": key_id}
 
 
 if __name__ == "__main__":
