@@ -15,7 +15,16 @@
 | **Solution** | A 4-agent AI decision-support system that retrieves evidence for a variant and produces a transparent, confidence-rated classification |
 | **Target Users** | Genetic counselors, clinical genetics labs, cancer screening programs |
 
+### 1.1 Team and Individual Contributions
+
+| Contributor | Primary subsystem | Supporting work |
+|---|---|---|
+| **Sanulya** | Evidence Retrieval Agent — Information Retrieval (TF-IDF indexing, relevance ranking, top-K) + ClinVar data + `scripts/` | `tests/test_evidence_agent.py`, dataset provenance (`data/DATA_SOURCE.md`) |
+| **Nihindu** | Intake Agent — NLP entity extraction + input sanitization — plus the REST API (`api.py`) and web frontend (`frontend/index.html`) | `tests/test_intake_agent.py`, API/frontend usage documentation |
+| **Nipuni** | Report Agent — summarization + Responsible AI — plus the Gemini client (`llm/`) and the agent communication/security layer (`protocol/`) | `tests/test_llm_resilience.py`, `tests/test_security.py`, `protocol/PROTOCOL.md` |
+| **Sandali** | Classification Agent — ACMG-style rules + LLM reasoning — plus orchestration/integration (`main.py`) | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
 ---
+
 
 ## 2. Problem Statement
 
@@ -117,7 +126,7 @@ Final Report (Confidence, Evidence, Disclaimers)
 | Aspect | Implementation |
 |---|---|
 | **File** | `agents/evidence_agent.py` |
-| **IR approach** | TF-IDF/BM25-based retrieval, filtering, and ranked top-K evidence selection |
+| **IR approach** | TF-IDF-based retrieval with cosine similarity (scikit-learn `TfidfVectorizer` + `cosine_similarity`), filtering, and ranked top-K evidence selection. No BM25 implementation is used. |
 | **Dataset** | `data/clinvar_variant_dataset.xlsx` (3,009 BRCA1/BRCA2 ClinVar variants) |
 | **Evidence fields** | SIFT prediction, PolyPhen, CADD score, IMPACT, frequency data, disease name, conflict flag |
 
@@ -283,10 +292,29 @@ Report Agent → AgentMessage(REPORT_RESULT) → Orchestrator
 - Every message payload is **encrypted** with Fernet symmetric encryption
 - Every message is **logged** to `MessageLog` for a full audit trail
 
+> 📄 **Full protocol specification:** [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md) documents the
+> envelope schema, the message-type vocabulary, the security guarantees on the wire, a complete
+> worked four-message flow with real JSON, the audit-trail API and the REST transport layer.
+> This is the reference to quote during the viva.
+
 **REST API layer (`api.py`):**
-- HTTP endpoints: `POST /api/classify`, `GET /api/trail/{variant_id}`, `GET /health`
+- HTTP endpoints: `POST /api/classify`, `POST /api/report/pdf`, `GET /api/trail/{variant_id}`, `GET /api/pipeline/{variant_id}`, `GET /health`
 - Frontend talks to the API via HTTP — an additional, external agent-communication layer
-- API key authentication required for pipeline retrieval and audit trail endpoints
+- `POST /api/classify` **requires** an API key (supplied as an `X-API-Key` header or the `api_key` body field) and returns `401` without one — the frontend sends the demo key explicitly, so authentication is genuinely enforced rather than silently defaulted
+- CORS is restricted to explicit frontend origins (`FRONTEND_ORIGINS`, defaulting to localhost)
+
+**End-to-end field flow.** Two boolean flags are computed inside the agents and carried
+all the way to the API response, so they cannot be silently dropped between layers:
+
+| Flag | Computed in | Meaning |
+|---|---|---|
+| `review_required` | Classification Agent (`reconcile_with_consensus`) | The evidence-based call disagrees with ClinVar's reviewed consensus — a human reviewer must confirm the final classification. Always present; `True` on **both** disagreement branches (defer-to-consensus and call-stands). |
+| `coverage_fallback` | Evidence Agent (`retrieve`) | The variant was resolved from the ClinVar coverage index rather than the study workbook, so functional predictors and allele frequencies may be missing. `evidence_limitation` carries the human-readable explanation. |
+
+Both are declared with a `False` default on every code path, are passed through `main.py`
+into `api.py`'s response model, and are rendered in the web UI caveat banner. Regression
+tests assert they are always real booleans (`tests/test_classification_agent.py`,
+`tests/test_evidence_agent.py`).
 
 ---
 
@@ -294,7 +322,7 @@ Report Agent → AgentMessage(REPORT_RESULT) → Orchestrator
 
 | Feature | Where | How |
 |---|---|---|
-| **Authentication** | `protocol/security.py` | API key hashed with SHA-256; demo key prefilled |
+| **Authentication** | `protocol/security.py` | API key hashed with SHA-256; a valid key is required by `POST /api/classify` (401 otherwise) and by the audit-trail endpoints |
 | **Input sanitization** | Intake Agent | Rejects SQL/script injection, over-length input, empty queries |
 | **Prompt-injection defense** | `protocol/security.py` (`is_prompt_injection`) | Regex blocklist for system-prompt overrides ("ignore previous instructions"), exfiltration ("reveal system prompt"), role-hijack and jailbreak phrasing; enforced in `sanitize_query()` before any NLP/LLM sees the query |
 | **Encryption in transit** | `protocol/message.py` | All agent payloads encrypted with Fernet symmetric encryption |
@@ -346,6 +374,25 @@ Explainability (evidence + ACMG criteria + retrieval rationale + confidence brea
       ↓
 Clinical disclaimer (decision-support only, not diagnosis)
 ```
+
+### 8.1 Explicit Fairness Limitation — Population / Ancestry Representation
+
+Beyond disclosure, the system surfaces an explicit fairness limitation so that a
+population-frequency observation is never presented as equally informative for
+every patient. This text is carried in the machine-readable `responsible_ai`
+block (`agents/classification_agent.py`), rendered next to the clinical
+disclaimer in the web UI (`frontend/index.html`), and reproduced here:
+
+> **Population-data limitation:** Allele-frequency databases (e.g. ESP, ExAC,
+> 1000 Genomes/gnomAD) may have uneven representation across ancestry groups.
+> Population frequency evidence should therefore be interpreted cautiously and
+> should not be treated as equally informative for all populations.
+
+| Why this matters | How the system handles it |
+|---|---|
+| gnomAD/ExAC/1000G are historically skewed toward European-ancestry cohorts, so "rare" may be an artifact of under-sampling rather than true rarity | The classifier reports an intermediate AF as a **neutral population-frequency observation** and never auto-assigns `BS1` (which requires a validated disease-specific maximum credible AF) |
+| A frequency-based benign call could be a false negative for an under-represented ancestry | BA1-equivalent scoring requires AF > 0.001, and the fairness limitation is attached to every result reachable through the API |
+| Patients cannot see which caveats applied | The limitation is rendered in the UI footer and included in the PDF report disclaimer block |
 
 ---
 
@@ -423,26 +470,35 @@ ABLATION COMPARISON (30-variant sample, proxy labels)
 ### 9.3 Unit Tests
 
 ```
-67 passed
+75 passed
 ```
 
 - **Intake Agent (13)** — entity extraction, query types, security, rejections, plus prompt-injection override/exfiltration rejection
-- **Evidence Agent (9)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback
-- **Classification Agent (16)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002) and CADD/ClinVar separation tests
+- **Evidence Agent (11)** — exact lookup, gene-only, variant-only, position, IR metadata, top-K ranking, missingness metadata, encryption, TF-IDF fallback, plus `coverage_fallback` presence/value tests
+ - **Classification Agent (22)** — pathogenic/benign/VUS, missing predictors, conflict lowering confidence, encryption, LLM fallback, plus 7 confidence-consistency tests (label↔number invariant, LLM self-reported confidence discarded, conflict caps the number, 2★/3★/0★ consensus behaviour), plus BS1-neutrality (AF 0.0002), CADD/ClinVar separation, and 6 `review_required` tests (always present, boolean on every path, true on both disagreement branches)
 - **LLM resilience (8)** — bounded SDK retry, 503 → fallback-model chain → `RuntimeError`, classifier and reporter degradation, direction-aware conflict semantics, plus end-to-end 503 cascade (rules + template fallback, encrypted message path)
 - **Security module (21)** — sanitization, auth, encryption, plus prompt-injection override/exfiltration/role-hijack/jailbreak blocking
 
 ### 9.4 Analysis & Visualization Notebook
 
-In addition to the production evaluation script, the project includes `analysis.ipynb` — a Jupyter notebook for data exploration, model performance visualization, and presentation materials.
+In addition to the production evaluation script, the project includes `analysis.ipynb` — a
+**production evaluation and visualisation notebook** that profiles the dataset, evaluates the
+deployed multi-agent pipeline against real ClinVar labels, and generates the figures used in the
+report, video and viva. It contains **no separate machine-learning model**: it measures the
+system that ships.
 
-**Purpose:** Complement the production system with research-grade visualizations for presentations and assignments.
+**Purpose:** Complement the production system with research-grade visualizations for presentations
+and assignments.
 
 **Generated Visualizations (`analysis_results/` directory):**
 - **Data Exploration**: Gene distribution, variant types, impact levels, allele frequencies, CADD scores
-- **Model Performance**: Confusion matrix, ROC curves, feature importance, per-class metrics
-- **System Performance**: IR metrics (Precision@K, Recall@K), system architecture diagram
-- **Integration**: Uses production evaluation script results for consistency
+- **Real labels & system evaluation**: ClinVar classification distribution, evidence-based vs
+  consensus-reconciled results, directional agreement, predictor completeness, confidence
+  distribution, ClinVar review-star distribution, per-class precision/recall/F1
+- **Information Retrieval**: Precision@5, Recall@5, Exact-Match@5, MRR@5
+- **System**: 4-agent architecture diagram
+- **Integration**: The notebook calls `evaluation.py` directly, so its numbers and the CLI
+  evaluation cannot drift apart
 
 **Usage for Assignments:**
 - **Week 6 Mid Evaluation**: Visual demonstrations of data understanding, problem relevance, and system architecture
@@ -502,10 +558,11 @@ variant_agent_system/
 │   ├── message.py               # Agent communication protocol + NumpyJSONEncoder
 │   └── security.py              # Auth, sanitization, encryption (Fernet)
 ├── tests/
-│   ├── test_intake_agent.py     # 10 tests
-│   ├── test_evidence_agent.py   # 9 tests
-│   ├── test_classification_agent.py  # 7 tests
-│   └── test_security.py         # 17 tests
+│   ├── test_intake_agent.py     # 13 tests
+│   ├── test_evidence_agent.py   # 11 tests
+│   ├── test_classification_agent.py  # 22 tests
+│   ├── test_llm_resilience.py   # 8 tests
+│   └── test_security.py         # 21 tests
 ├── analysis_results/            # Generated visualizations for presentations
 │   └── README.md               # Guide to using analysis visualizations
 ├── .env.example                 # API key template
@@ -538,7 +595,7 @@ uvicorn api:app --reload --port 8000
 # open http://localhost:8000
 
 # Tests
-python3 -m pytest tests/ -v    # 67 tests
+python3 -m pytest tests/ -v    # 75 tests
 
 # Evaluation
 python3 evaluation.py                              # full suite (100 variants)
@@ -559,9 +616,9 @@ This project fulfills all assignment requirements:
 2. ✅ **4 interacting intelligent agents** (Intake, Evidence, Classification, Report)
 3. ✅ **LLM**: Google Gemini (classification reasoning + report generation)
 4. ✅ **NLP**: Named Entity Recognition (gene, HGVS, position, rsID) + intent classification + extractive/abstractive summarization
-5. ✅ **Information Retrieval**: TF-IDF/BM25-based retrieval, filtering, relevance ranking, and ranked top-K evidence selection with explainable scores
+5. ✅ **Information Retrieval**: TF-IDF-based retrieval with cosine similarity (scikit-learn `TfidfVectorizer` + `cosine_similarity`) — filtering, relevance ranking, and ranked top-K evidence selection with explainable scores. (No BM25 implementation is used.)
 6. ✅ **Security**: authentication (SHA-256 hashed API keys), input sanitization + explicit prompt-injection defense, Fernet encryption in transit, full audit logging, 503→rules/template fallback
 7. ✅ **Agent Communication Protocol**: Formal `AgentMessage` schema (message_id, trace_id, sender, receiver, message_type, timestamp) + REST API layer
 8. ✅ **Responsible AI**: Confidence derived from evidence (not arbitrary), never overstated, VUS handled honestly, conflict-adjusted, full transparency, clinical disclaimers
 9. ✅ **Commercialization**: Pricing model (Free/Professional/Enterprise), target users, deployment ideas
-10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **67 passing unit tests**
+10. ✅ **Evaluation**: honest evaluation against **real ClinVar labels** (4.8% exact / 42.6% directional agreement from the agent's own ACMG reasoning, rising to 38.1% / 98.3% after ClinVar-consensus reconciliation), confusion matrix, precision/recall/F1, Precision@K/Recall@K, ablation comparison, **75 passing unit tests**

@@ -89,6 +89,18 @@ BS1_STATUS = (
     "AF threshold is configured for this prototype, so BS1 is never "
     "auto-assigned (e.g. AF=0.0002 does not meet BS1)."
 )
+
+# Responsible-AI fairness limitation surfaced with every classification. Population
+# allele-frequency databases (ESP/ExAC/1000G/gnomAD) have known ancestry skew, so a
+# frequency-based observation must not be treated as equally informative for all
+# patients. This string is carried in the machine-readable `responsible_ai` block,
+# rendered in the web UI and included in the PDF report.
+FAIRNESS_LIMITATION = (
+    "Population-data limitation: Allele-frequency databases may have uneven "
+    "representation across ancestry groups. Population frequency evidence should "
+    "therefore be interpreted cautiously and should not be treated as equally "
+    "informative for all populations."
+)
 CADD_PATHOGENIC_THRESHOLD = 20.0
 
 # Classification labels
@@ -294,6 +306,7 @@ class ClassificationAgent:
                 "computational_annotations": [],
                 "clinvar_context": [],
                 "population_observation": None,
+                "review_required": False,
                 "reasoning": "No matching record found in the evidence database.",
                 "responsible_ai": {
                     "clinical_disclaimer": (
@@ -303,6 +316,7 @@ class ClassificationAgent:
                     ),
                     "mode": "rule_based_fallback",
                     "confidence_source": "insufficient_evidence_no_matching_record",
+                    "fairness_limitation": FAIRNESS_LIMITATION,
                 },
             }
 
@@ -450,6 +464,7 @@ class ClassificationAgent:
             "computational_annotations": computational_annotations,
             "clinvar_context": clinvar_context,
             "population_observation": population_observation,
+            "review_required": False,
             "reasoning": vus_reasoning,
             "confidence_components": confidence_info["components"],
             "responsible_ai": {
@@ -463,6 +478,7 @@ class ClassificationAgent:
                 "mode": "rule_based",
                 "confidence_source": "derived_from_evidence_components",
                 "conflict_adjusted": conflict,
+                "fairness_limitation": FAIRNESS_LIMITATION,
             },
         }
 
@@ -656,6 +672,7 @@ class ClassificationAgent:
                 "mode": "llm_with_rule_based_confidence",
                 "confidence_source": "derived_from_evidence_components",
                 "conflict_adjusted": conflict,
+                "fairness_limitation": FAIRNESS_LIMITATION,
             }
 
             return result, True
@@ -761,6 +778,12 @@ class ClassificationAgent:
         stars = self._review_stars(evidence.get("prior_review_stars"))
         evidence_based = result.get("classification")
         consensus_call = self._consensus_call(prior)
+
+        # Guarantee the human-review flag is present and False by default on every
+        # path. It is only ever set True below, so without this the key would be
+        # absent on agreement / no-consensus cases and a consumer reading it with
+        # .get() would receive None instead of a boolean.
+        result.setdefault("review_required", False)
 
         block = {
             "clinvar_classification": prior,

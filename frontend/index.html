@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VariantLens | Precision Genetic Intelligence</title>
+<meta name="description" content="VariantLens interprets BRCA1 and BRCA2 variants from ClinVar evidence: ranked retrieval, ACMG-style criteria applied in code, and a confidence score you can trace.">
+<meta name="theme-color" content="#142B4A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- Indeterminate progress bar for page-level loads (session restore, profile,
+     admin dashboard). Hidden until something actually needs fetching. -->
+<div class="load-bar" id="loadBar" aria-hidden="true"></div>
+
+<!-- ===== Header: the only persistent chrome ===== -->
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="#" onclick="goHome();return false;">
+      <span class="brand-mark"></span>
+      <span class="brand-text">
+        <h1>VariantLens</h1>
+        <span class="brand-tagline">BRCA1 / BRCA2 decision support</span>
+      </span>
+    </a>
+
+    <nav class="site-nav" aria-label="Primary">
+      <a href="#top" onclick="goToSection('top');return false;">Home</a>
+      <a href="#platform" onclick="goToSection('platform');return false;">Platform</a>
+      <a href="#solutions" onclick="goToSection('solutions');return false;">Solutions</a>
+      <a href="#how" onclick="goToSection('how');return false;">How It Works</a>
+      <a href="#about" onclick="goToSection('about');return false;">About</a>
+    </nav>
+
+    <div class="header-actions" id="headerSignedOut">
+      <button class="btn-ghost" onclick="openAuth('signin')">Sign in</button>
+      <button class="btn-primary" onclick="openAuth('register')">Get Started</button>
+    </div>
+
+    <div class="header-actions header-actions-signed hidden" id="headerSignedIn">
+      <button class="btn-ghost palette-btn" id="paletteBtn" onclick="openPalette()">Search
+        <kbd class="palette-key">&#8984;K</kbd></button>
+      <button class="btn-nav" id="analyseNavBtn" onclick="showView('workspace')">Analyse</button>
+      <button class="btn-ghost hidden" id="adminNavBtn" onclick="showView('admin')">Admin</button>
+      <div class="profile-wrap">
+        <button class="avatar" id="avatarBtn" onclick="toggleProfileMenu(event)"
+                aria-haspopup="menu" aria-expanded="false">?</button>
+        <div class="profile-menu hidden" id="profileMenu" role="menu">
+          <div class="pm-head">
+            <div class="pm-name" id="pmName">&mdash;</div>
+            <div class="pm-mail" id="pmMail"></div>
+            <span class="plan-badge" id="pmPlan">&mdash;</span>
+          </div>
+          <div class="pm-quota">
+            <span id="pmQuota">&mdash;</span>
+            <div class="quota-bar"><div class="quota-fill" id="pmQuotaFill"></div></div>
+          </div>
+          <button class="pm-item" onclick="showView('profile');toggleProfileMenu(event)">Profile &amp; plan</button>
+          <button class="pm-item hidden" id="pmAdminItem"
+                  onclick="showView('admin');toggleProfileMenu(event)">Admin dashboard</button>
+          <button class="pm-item danger" onclick="logout()">Sign out</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The desktop nav and the account actions are hidden on small screens, so
+         this button is the only route to them. Without it a phone visitor would
+         get a logo and nothing else. -->
+    <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false"
+            aria-controls="mobileNav" aria-label="Open navigation"
+            onclick="toggleMobileNav(event)">
+      <span class="nav-toggle-bar"></span>
+      <span class="nav-toggle-bar"></span>
+      <span class="nav-toggle-bar"></span>
+    </button>
+  </div>
+</header>
+
+<main>
+
+<!-- ===== 1. Landing ===== -->
+<section class="view" id="viewLanding">
+
+  <!-- ===== Hero ===== -->
+  <div class="hero-l" id="top">
+    <div class="hero-l-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">Precision genetic intelligence</p>
+        <h2 class="hero-h1">See the details<br>behind every variant.</h2>
+        <p class="hero-lede">VariantLens reads a BRCA1 or BRCA2 variant question, retrieves
+           the ClinVar evidence behind it, and returns a classification you can trace &mdash;
+           the records it ranked, the ACMG-style criteria it applied, and the confidence
+           those criteria actually earn.</p>
+        <div class="hero-cta" data-when="out">
+          <button class="btn-primary btn-lg" onclick="openAuth('register')">Explore VariantLens</button>
+          <button class="btn-ghost btn-lg" onclick="goToSection('platform')">Learn More</button>
+        </div>
+        <div class="hero-cta hidden" data-when="in">
+          <button class="btn-primary btn-lg" onclick="showView('workspace')">Analyse a variant</button>
+          <button class="btn-ghost btn-lg" onclick="goToSection('platform')">Learn More</button>
+        </div>
+        <p class="hero-note" data-when="out">Free plan: 10 queries a month, rule-based reasoning, no credit card.</p>
+        <p class="hero-note hidden" data-when="in" id="heroSignedInNote"></p>
+      </div>
+      <figure class="hero-media">
+        <img data-img="hero" fetchpriority="high" decoding="async"
+             alt="The VariantLens workspace: the query &quot;Is BRCA1 NC_000017.10:g.41244442A&gt;G pathogenic?&quot; beside the Pathogenic call it produced, its confidence and the ACMG-style criteria applied">
+      </figure>
+    </div>
+  </div>
+
+  <!-- ===== Trust / capability strip =====
+       Capability statements, not invented certifications or customer counts. Every
+       line here describes something the pipeline actually does. -->
+  <div class="trust-strip">
+    <div class="trust-inner">
+      <div class="trust-item">
+        <span class="trust-k">Precision</span>
+        <span class="trust-v">ACMG-style criteria applied in code, not asserted</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-k">Advanced analysis</span>
+        <span class="trust-v">Three interchangeable retrieval rankers</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-k">Reliable results</span>
+        <span class="trust-v">Conservative by construction, never over-confident</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-k">Secure data</span>
+        <span class="trust-v">Per-account isolation and encrypted agent traffic</span>
+      </div>
+      <div class="trust-item">
+        <span class="trust-k">Modern technology</span>
+        <span class="trust-v">A supervisor and a verifier on every run</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== The platform ===== -->
+  <div class="section-block" id="platform">
+    <div class="section-head-block">
+      <p class="eyebrow">The VariantLens platform</p>
+      <h3 class="block-title">Where advanced technology<br>meets genetic insight</h3>
+      <p class="block-lede">Three things happen on every query. The variant is parsed out of
+         ordinary language, the evidence behind it is retrieved and ranked, and the call is
+         written up with its reasoning attached. Each stage is a separate agent with one job.</p>
+    </div>
+    <div class="card-row">
+      <a class="vcard" href="#how" onclick="goToSection('how');return false;">
+        <div class="vcard-media">
+          <img data-img="variantAnalysis" loading="lazy" decoding="async"
+               alt="The intake stage: &quot;Classify BRCA2 c.5946delT&quot; resolved into gene BRCA2, HGVS c.5946delT, transcript NM_000059.4 and position chr13:32,340,300, marked as screened">
+        </div>
+        <div class="vcard-body">
+          <span class="vcard-n">01</span>
+          <h4 class="vcard-title">Variant analysis</h4>
+          <p class="vcard-text">A plain-English question becomes a structured variant &mdash;
+             gene, HGVS expression, rsID or genomic position &mdash; and the raw input is
+             screened before any agent sees it.</p>
+          <span class="vcard-go" aria-hidden="true">&rarr;</span>
+        </div>
+      </a>
+
+      <a class="vcard" href="#solutions" onclick="goToSection('solutions');return false;">
+        <div class="vcard-media">
+          <img data-img="genetics" loading="lazy" decoding="async"
+               alt="Chromosome ideograms for chr17 and chr13 with the BRCA1 and BRCA2 loci marked, beside four ranked ClinVar records with a match type, a relevance score and the written reason for each">
+        </div>
+        <div class="vcard-body">
+          <span class="vcard-n">02</span>
+          <h4 class="vcard-title">Genetic insight</h4>
+          <p class="vcard-text">Candidate records come back with a relevance score, a match
+             type and a written reason &mdash; so the strength of the evidence is visible
+             rather than implied.</p>
+          <span class="vcard-go" aria-hidden="true">&rarr;</span>
+        </div>
+      </a>
+
+      <a class="vcard" href="#showcase" onclick="goToSection('showcase');return false;">
+        <div class="vcard-media">
+          <img data-img="clinical" loading="lazy" decoding="async"
+               alt="An exported report page: an Uncertain Significance call at moderate confidence, four ACMG-style criteria with the direction each points, and a named reviewer's sign-off">
+        </div>
+        <div class="vcard-body">
+          <span class="vcard-n">03</span>
+          <h4 class="vcard-title">Clinical interpretation</h4>
+          <p class="vcard-text">The classification, the criteria behind it and the confidence
+             it earns are reported together, and held against a named reviewer's sign-off.</p>
+          <span class="vcard-go" aria-hidden="true">&rarr;</span>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <!-- ===== Precision analysis ===== -->
+  <div class="section-block alt" id="how">
+    <div class="split-grid">
+      <div class="split-copy">
+        <p class="eyebrow">Precision analysis</p>
+        <h3 class="block-title">Modern tools.<br>Clearer genetic insights.</h3>
+        <p class="block-lede">The evidence agent indexes the variant corpus and ranks
+           candidates by how strongly they support a call. Classification then applies
+           ACMG-style criteria in code, so the same evidence produces the same verdict and
+           the same confidence every time.</p>
+        <ul class="point-list">
+          <li class="point">Intelligent variant analysis across HGVS, rsID, gene and position queries</li>
+          <li class="point">Ranked evidence with a relevance score and a reason for every record</li>
+          <li class="point">Structured criteria output before any narrative is written</li>
+          <li class="point">A verifier that sends an over-confident call back once to be restated</li>
+        </ul>
+      </div>
+      <figure class="split-media">
+        <img data-img="retrieval" loading="lazy" decoding="async"
+             alt="Five records ranked by all three retrieval rankers &mdash; TF-IDF, BM25 and their reciprocal-rank fusion &mdash; showing the three disagreeing about the order">
+      </figure>
+    </div>
+
+    <div class="flow-block">
+      <div class="section-head-block">
+        <p class="eyebrow">How it works</p>
+        <h3 class="block-title">Six agents, one auditable verdict</h3>
+        <p class="block-lede">Four specialists each do one job and hand a structured result to
+           the next. The other two exist to check them: one plans the run before it starts,
+           one challenges the result before it is reported. Nothing is asserted that the
+           system cannot show its working for.</p>
+      </div>
+      <!-- The pipeline as something you can poke at, rather than six paragraphs
+           side by side. Each step is a button, the panel below follows the
+           selection, and the verifier's edge back to classification is drawn
+           explicitly -- that loop is the part a static diagram always loses. -->
+      <div class="flow" id="pipelineFlow">
+        <div class="flow-wrap">
+          <div class="flow-track" id="flowTrack" role="tablist" aria-label="Agent pipeline"></div>
+          <svg class="flow-loop-svg" id="flowLoop" viewBox="0 0 100 100"
+               preserveAspectRatio="none" aria-hidden="true">
+            <path vector-effect="non-scaling-stroke"
+                  d="M75,7 C75,34 58.3,34 58.3,10"></path>
+          </svg>
+        </div>
+        <p class="flow-loop-label">Verifier &rarr; Classification &middot; a call that
+           claims more confidence than the evidence earns is sent back once</p>
+        <div class="flow-panel" id="flowPanel"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Capability grid (dark) ===== -->
+  <div class="dark-band" id="capabilities">
+    <div class="dark-inner">
+      <div class="section-head-block">
+        <p class="eyebrow eyebrow-inv">Inside the system</p>
+        <h3 class="block-title block-title-inv">Every capability,<br>named and accounted for</h3>
+        <p class="block-lede block-lede-inv">Six stages, each one inspectable. The plan, the
+           revision and the verdict all appear in the record, so a report can be followed
+           back to the work that produced it.</p>
+      </div>
+      <div class="cap-grid">
+        <article class="cap">
+          <span class="cap-code">QP</span>
+          <h4 class="cap-title">Query parsing</h4>
+          <p class="cap-text">Entity recognition resolves the gene, the HGVS expression, the
+             rsID or the position, and screens the raw input before an agent runs.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+        <article class="cap">
+          <span class="cap-code">IR</span>
+          <h4 class="cap-title">Evidence retrieval</h4>
+          <p class="cap-text">TF-IDF, a hand-rolled BM25 and their reciprocal-rank fusion over
+             3,009 indexed ClinVar records, returning the top five with a reason each.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+        <article class="cap">
+          <span class="cap-code">AC</span>
+          <h4 class="cap-title">ACMG-style classification</h4>
+          <p class="cap-text">Deterministic criteria decide the call. Where model reasoning is
+             enabled it reads the same retrieved evidence &mdash; it never outranks the rules.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+        <article class="cap">
+          <span class="cap-code">VR</span>
+          <h4 class="cap-title">Verification</h4>
+          <p class="cap-text">A call that claims more confidence than its evidence supports is
+             sent back once, and can only come back lower. It can never manufacture certainty.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+        <article class="cap">
+          <span class="cap-code">AT</span>
+          <h4 class="cap-title">Audit trail</h4>
+          <p class="cap-text">Every agent hop is a structured, encrypted message with a trace
+             id, held against the account that ran it and exportable for review.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+        <article class="cap">
+          <span class="cap-code">RS</span>
+          <h4 class="cap-title">Report &amp; sign-off</h4>
+          <p class="cap-text">A narrative report, the evidence table and the criteria list,
+             exportable to PDF and closed out by a named reviewer, date and signature.</p>
+          <span class="cap-go" aria-hidden="true">&rarr;</span>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Solutions ===== -->
+  <div class="section-block" id="solutions">
+    <div class="section-head-block">
+      <p class="eyebrow">Solutions</p>
+      <h3 class="block-title">Insights that help you<br>make better decisions</h3>
+      <p class="block-lede">For a laboratory working through a variant list, the useful part
+         is not a single label. It is knowing which records drove the call, how strong they
+         were, and where the evidence runs out.</p>
+    </div>
+    <div class="card-row">
+      <article class="pcard">
+        <div class="pcard-media">
+          <img data-img="solutionOne" loading="lazy" decoding="async"
+               alt="A ranked evidence table: five ClinVar records with the relevance score each was returned for, ClinVar's own classification and review-status stars, and one record marked as conflicting">
+        </div>
+        <h4 class="pcard-title">Evidence you can check</h4>
+        <p class="pcard-text">Ranked ClinVar records with match type and relevance, so any
+           call can be followed back to the records that produced it.</p>
+      </article>
+      <article class="pcard">
+        <div class="pcard-media">
+          <img data-img="solutionTwo" loading="lazy" decoding="async"
+               alt="A confidence score broken into the five weighted components that produced it, each contributing a positive or negative amount to a total of 40">
+        </div>
+        <h4 class="pcard-title">Interpretation you can review</h4>
+        <p class="pcard-text">Criteria, confidence and the reviewer's own sign-off, recorded
+           against the account that made the call and the date it was made.</p>
+      </article>
+      <article class="pcard">
+        <div class="pcard-media">
+          <img data-img="solutionThree" loading="lazy" decoding="async"
+               alt="A fourteen-day query history chart above an authenticated API call carrying an X-API-Key header, and the history, audit-export and key-issue endpoints">
+        </div>
+        <h4 class="pcard-title">A workflow that scales</h4>
+        <p class="pcard-text">Query history, compliance export and an authenticated API for
+           the systems a laboratory already runs.</p>
+      </article>
+    </div>
+  </div>
+
+  <!-- ===== Statistics =====
+       Real figures from the indexed dataset and the pipeline itself. Nothing here
+       is estimated, and there are no invented customers or certifications. -->
+  <div class="stat-band">
+    <div class="stat-band-inner">
+      <div class="sb-item">
+        <div class="sb-num">3,009</div>
+        <div class="sb-label">ClinVar records indexed across BRCA1 and BRCA2</div>
+      </div>
+      <div class="sb-item">
+        <div class="sb-num">6</div>
+        <div class="sb-label">Agents in every run &mdash; four specialists, two controls</div>
+      </div>
+      <div class="sb-item">
+        <div class="sb-num">5</div>
+        <div class="sb-label">ACMG-style criteria applied by code, not by assertion</div>
+      </div>
+      <div class="sb-item">
+        <div class="sb-num">3</div>
+        <div class="sb-label">Retrieval rankers compared: TF-IDF, BM25 and their fusion</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== About ===== -->
+  <div class="section-block" id="about">
+    <div class="about-grid">
+      <div class="about-copy">
+        <p class="eyebrow">About VariantLens</p>
+        <h3 class="block-title">Decision support,<br>not a black box</h3>
+      </div>
+      <div class="about-body">
+        <p>VariantLens interprets BRCA1 and BRCA2 variants from ClinVar evidence. It is built
+           for the part of genetic testing where submitters disagree: rather than averaging
+           conflicting records into one confident number, it shows the disagreement and
+           reports the call it can defend.</p>
+        <p>Every result carries a confidence score, the evidence it rests on and the criteria
+           behind it, and is framed as decision support for a qualified professional rather
+           than a diagnosis. Uncertain calls are labelled uncertain, and population-frequency
+           evidence that has not been validated is reported as a neutral observation instead
+           of as a benign criterion.</p>
+        <div class="about-facts">
+          <div class="about-fact">
+            <span class="af-k">Scope</span>
+            <span class="af-v">BRCA1 and BRCA2 &mdash; 1,075 and 1,934 indexed records</span>
+          </div>
+          <div class="about-fact">
+            <span class="af-k">Evidence</span>
+            <span class="af-v">ClinVar, including 1,841 conflicting interpretations shown as such</span>
+          </div>
+          <div class="about-fact">
+            <span class="af-k">Output</span>
+            <span class="af-v">Verdict, evidence table, criteria, audit trail and sign-off</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Try a query ===== -->
+  <div class="section-block alt" id="showcase">
+    <div class="section-head-block">
+      <p class="eyebrow">See it work</p>
+      <h3 class="block-title">Try a query</h3>
+      <p class="block-lede">Plain language, no special syntax. Pick one to run the
+         full pipeline end to end.</p>
+    </div>
+    <div class="example-list" id="landingExamples"></div>
+  </div>
+
+  <!-- ===== Pricing ===== -->
+  <div class="section-block" id="pricing">
+    <div class="section-head-block">
+      <p class="eyebrow">Pricing</p>
+      <h3 class="block-title">Start free. Upgrade when you need more.</h3>
+      <p class="block-lede">Every plan runs the same six agents. Higher tiers add
+         query volume, LLM-assisted reasoning and API access. No card required to
+         start.</p>
+    </div>
+    <div class="price-grid">
+      <div class="price-card">
+        <h4>Free</h4>
+        <p class="price-tag">For exploring the pipeline</p>
+        <div class="price-amount"><span class="cur">Rs.</span>0<span class="per">/mo</span></div>
+        <ul class="price-feats">
+          <li>10 queries per month</li>
+          <li>Rule-based classification</li>
+          <li>Full evidence and audit trail</li>
+          <li>Human sign-off workflow</li>
+        </ul>
+        <button class="btn-ghost price-btn" data-when="out" onclick="openAuth('register')">Start free</button>
+        <p class="price-fineprint" data-when="in" id="freePlanNote"></p>
+      </div>
+
+      <div class="price-card featured">
+        <div class="price-badge">Most popular</div>
+        <h4>Professional</h4>
+        <p class="price-tag">For clinics interpreting weekly</p>
+        <div class="price-amount"><span class="cur">Rs.</span>29,700<span class="per">/mo</span></div>
+        <ul class="price-feats">
+          <li>500 queries per month</li>
+          <li>LLM-assisted reasoning</li>
+          <li>API access</li>
+          <li>Audit export</li>
+        </ul>
+        <div class="price-fineprint" data-when="out">Upgrades are reviewed by an administrator.</div>
+        <button class="btn-primary price-btn" data-when="out" onclick="openAuth('register')">Create a free account</button>
+        <div class="price-fineprint" data-when="in">Manage or request this plan from
+          <a href="#" onclick="showView('profile');return false;">your account</a>.</div>
+      </div>
+
+      <div class="price-card">
+        <h4>Enterprise</h4>
+        <p class="price-tag">For larger screening programmes</p>
+        <div class="price-amount">Custom</div>
+        <ul class="price-feats">
+          <li>Unlimited queries</li>
+          <li>LLM-assisted reasoning</li>
+          <li>API access</li>
+          <li>Audit export</li>
+        </ul>
+        <button class="btn-ghost price-btn" onclick="openAuth('register')">Talk to us</button>
+      </div>
+    </div>
+    <p class="price-note">Prices are in Sri Lankan rupees, converted from the
+       report's USD table at an indicative Rs. 300 to the dollar and rounded to the
+       nearest hundred. Academic prototype: no payment is processed anywhere
+       in this application &mdash; upgrade requests are reviewed by an
+       administrator.</p>
+  </div>
+
+  <!-- ===== FAQ ===== -->
+  <div class="section-block alt" id="faq">
+    <div class="section-head-block">
+      <p class="eyebrow">Questions</p>
+      <h3 class="block-title">Frequently asked</h3>
+    </div>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>Does VariantLens diagnose anything?</summary>
+        <p>No. It produces an algorithmic estimate from the evidence it can retrieve,
+           which is decision support for a qualified professional. Every report
+           states that it is not for standalone clinical use, and must be reviewed by
+           a genetic counselor or clinical geneticist.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Which genes does it cover?</summary>
+        <p>BRCA1 and BRCA2 only, which is where hereditary breast and ovarian cancer
+           risk lives. The indexed extract holds 3,009 ClinVar records across the two
+           genes. Other genes are out of scope for this prototype.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How does it decide how to search and how much to trust itself?</summary>
+        <p>A supervisor agent plans each run from the parsed query: a named variant
+           is retrieved narrowly and its classification must be justified by an exact
+           match or a reviewed consensus, while a bare rsID or position is retrieved
+           broadly and a partial match is tolerated instead. A verifier agent then
+           checks the finished call against the evidence it rests on, and if the call
+           claims more confidence than the evidence earns it is sent back once to be
+           re-stated more conservatively. Both decisions are ordinary messages in the
+           audit trail, so the reasoning behind a report is inspectable. Self-correction
+           can only ever lower confidence &mdash; it can never manufacture certainty, and
+           it never changes whether a variant is called pathogenic or uncertain.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What role does the language model play?</summary>
+        <p>On the rule-based tier, none &mdash; classification is fully deterministic.
+           Where LLM reasoning is enabled it reads the same retrieved evidence and
+           produces a narrative, but the criteria and their outcomes are applied by
+           code. The reasoning mode in use is recorded on every report.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What happens when ClinVar records disagree?</summary>
+        <p>They are shown as disagreeing. A large share of the dataset carries
+           conflicting interpretations, and collapsing those into a single number
+           would misrepresent the underlying evidence.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I export or integrate the results?</summary>
+        <p>Reports export to PDF, and the pipeline, evidence and audit trail are
+           available as authenticated API endpoints. Both require the Professional
+           tier or above.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Who can see my queries and sign-offs?</summary>
+        <p>Queries, usage and review sign-offs are stored against your account.
+           Administrators can see account-level usage and the upgrade queue, and
+           every sign-off records the reviewing account and a timestamp.</p>
+      </details>
+    </div>
+  </div>
+
+  <!-- ===== Final call to action ===== -->
+  <div class="cta-band">
+    <img class="cta-bg" data-img="corpus" alt="" aria-hidden="true">
+    <div class="cta-inner">
+      <p class="eyebrow eyebrow-inv">Get started</p>
+      <h3 class="cta-title">Turn complex genetic data<br>into clearer insights.</h3>
+      <p class="cta-lede">Explore a more precise way to understand and work with genetic
+         information &mdash; the evidence, the criteria and the confidence, together.</p>
+      <div class="cta-actions" data-when="out">
+        <button class="btn-primary btn-lg" onclick="openAuth('register')">Get Started</button>
+        <button class="btn-ghost btn-lg btn-on-dark" onclick="goToSection('platform')">Explore Platform</button>
+      </div>
+      <div class="cta-actions hidden" data-when="in">
+        <button class="btn-primary btn-lg" onclick="showView('workspace')">Analyse a variant</button>
+        <button class="btn-ghost btn-lg btn-on-dark" onclick="goToSection('platform')">Explore Platform</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Footer ===== -->
+  <div class="landing-foot">
+    <div class="mega-foot">
+      <div class="mega-brand">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <h1>VariantLens</h1>
+        </div>
+        <p>Auditable BRCA1 / BRCA2 variant interpretation. Decision support for
+           qualified professionals &mdash; never a diagnosis.</p>
+        <p class="mega-disclaimer">Every result carries a confidence score, the evidence it
+           rests on and the criteria behind it. Evidence from ClinVar.</p>
+      </div>
+      <div class="mega-col">
+        <h5>Platform</h5>
+        <a href="#platform" onclick="goToSection('platform');return false;">Overview</a>
+        <a href="#capabilities" onclick="goToSection('capabilities');return false;">Capabilities</a>
+        <a href="#solutions" onclick="goToSection('solutions');return false;">Solutions</a>
+        <a href="#how" onclick="goToSection('how');return false;">How It Works</a>
+      </div>
+      <div class="mega-col">
+        <h5>Company</h5>
+        <a href="#about" onclick="goToSection('about');return false;">About</a>
+        <a href="#pricing" onclick="goToSection('pricing');return false;">Pricing</a>
+        <a href="#faq" onclick="goToSection('faq');return false;">Contact</a>
+      </div>
+      <div class="mega-col">
+        <h5>Resources</h5>
+        <a href="/docs" target="_blank" rel="noopener">Documentation</a>
+        <a href="/redoc" target="_blank" rel="noopener">API Reference</a>
+        <a href="#showcase" onclick="goToSection('showcase');return false;">Worked Examples</a>
+        <a href="#faq" onclick="goToSection('faq');return false;">Support</a>
+      </div>
+      <div class="mega-col" id="footerAccountOut">
+        <h5>Account</h5>
+        <a href="#" onclick="openAuth('signin');return false;">Sign in</a>
+        <a href="#" onclick="openAuth('register');return false;">Create an account</a>
+      </div>
+      <div class="mega-col hidden" id="footerAccountIn">
+        <h5>Account</h5>
+        <a href="#" onclick="showView('profile');return false;">Profile &amp; plan</a>
+        <a href="#" id="footerAdminLink" onclick="showView('admin');return false;">Admin dashboard</a>
+        <a href="#" onclick="logout()">Sign out</a>
+      </div>
+    </div>
+    <div class="mega-legal">
+      <p><strong>Decision support only.</strong> VariantLens does not issue a diagnosis.
+         Every result is an algorithmic estimate from available evidence and must be
+         reviewed by a qualified genetic counselor or clinical geneticist before
+         informing any clinical decision. Evidence from ClinVar.</p>
+      <div class="legal-row">
+        <p class="site-foot">&copy; 2026 StatFInity &middot; All rights reserved</p>
+        <nav class="legal-links" aria-label="Legal">
+          <a href="#faq" onclick="goToSection('faq');return false;">Privacy</a>
+          <a href="#faq" onclick="goToSection('faq');return false;">Terms</a>
+        </nav>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ===== 2. Workspace ===== -->
+<section class="view hidden" id="viewWorkspace">
+  <div class="app">
+
+    <aside class="rail">
+      <div class="rail-head">
+        <div class="mono eyebrow">Variant query</div>
+        <h2 class="rail-title">Ask about a BRCA1 or BRCA2 variant</h2>
+        <p class="rail-sub">A gene, an HGVS expression or an rsID. The six-agent
+           pipeline returns the verdict, the evidence behind it and the full trail.</p>
+      </div>
+
+      <label class="field-label" for="query">Your question</label>
+      <textarea id="query" placeholder="e.g. Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?"></textarea>
+      <p class="kbd-hint">Press <kbd>/</kbd> to jump here &middot; <kbd>Ctrl</kbd> or
+         <kbd>&#8984;</kbd> + <kbd>Enter</kbd> to run &middot; <kbd>Ctrl</kbd> or
+         <kbd>&#8984;</kbd> + <kbd>K</kbd> for commands</p>
+
+      <div class="examples" id="examples"></div>
+      <button type="button" class="examples-toggle" id="examplesToggle"
+              onclick="toggleWorkspaceExamples()" hidden>
+        Browse example queries
+      </button>
+
+      <button id="submitBtn" onclick="classifyVariant()">Analyze variant</button>
+      <div class="followup-panel" id="followupPanel" hidden>
+        <div class="followup-label">Ask a follow-up about this variant</div>
+        <div class="followup-actions">
+          <button type="button" class="followup-btn" onclick="askFollowUp('Is this variant common in the general population?')">Population frequency</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What is the protein or functional impact of this variant?')">Protein impact</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What is the variant consequence?')">Variant consequence</button>
+          <button type="button" class="followup-btn" onclick="askFollowUp('What do prior ClinVar submitters and experts say about this variant?')">Prior classifications</button>
+        </div>
+      </div>
+
+      <div class="rail-usage" id="railUsage">
+        <div class="rail-usage-head">
+          <span class="plan-badge" id="railPlan">&mdash;</span>
+          <span class="rail-usage-text" id="railQuota">&mdash;</span>
+        </div>
+        <div class="quota-bar"><div class="quota-fill" id="railMeter"></div></div>
+      </div>
+
+      <div class="rail-divider"></div>
+      <div class="rail-note">
+        <strong>Decision support only.</strong> This tool does not issue a diagnosis. Every result is
+        an algorithmic estimate from available evidence and must be reviewed by a qualified genetic
+        counselor or clinical geneticist before informing any clinical decision.
+      </div>
+
+    </aside>
+    <main class="stage">
+        <div class="banner">
+          <span class="dot"></span>
+          <span><b>Clinical decision-support tool</b> — not a diagnostic device. Classification confidence
+          reflects evidence strength, not medical certainty. A qualified genetic counselor must review
+          every result before clinical use.</span>
+        </div>
+
+        <div class="stage-inner">
+
+          <div id="empty" class="empty-state">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#9BA3B0" stroke-width="1.4"><path d="M4 4c4 0 4 3 8 3s4-3 8-3M4 20c4 0 4-3 8-3s4 3 8 3M4 12h16" stroke-linecap="round"/></svg>
+            <p>Enter a variant query at left &mdash; a gene name, an HGVS notation, or an rsID &mdash; to run it
+            through the six-agent interpretation pipeline. Pick one of the examples to see a full
+            report: verdict, evidence, criteria, and the audit trail behind it.</p>
+          </div>
+
+          <div id="loading" role="status" aria-live="polite">
+            <div class="spin"></div>
+            <p id="loadingMsg">Authenticating request…</p>
+          </div>
+
+          <div id="error"></div>
+
+          <div id="results">
+            <div class="report-head">
+              <div>
+                <h2>Variant interpretation report</h2>
+                <div class="vid mono" id="repVariantId">—</div>
+                <div class="head-meta" style="margin-top:8px;">
+                  <span id="repTimestamp"></span>
+                  <span id="repMode"></span>
+                </div>
+              </div>
+              <div class="head-actions">
+                <button class="btn-ghost" onclick="window.print()">Print / Save PDF</button>
+                <button class="btn-ghost" id="pdfBtn" onclick="downloadPDF()">Download PDF</button>
+                <button class="btn-ghost" onclick="copyReport()">Copy report</button>
+              </div>
+            </div>
+
+            <div class="gene-overview-banner" id="geneOverviewBanner" style="display:none;"></div>
+            <div class="caveat-banner" id="caveatBanner" style="display:none;"></div>
+            <div class="focused-evidence-panel" id="focusedEvidencePanel" style="display:none;"></div>
+
+            <div id="verdictSection">
+              <div class="verdict">
+                <div class="verdict-bar" id="verdictBar"></div>
+                <div class="verdict-body">
+                  <div class="verdict-label" id="verdictLabel">Classification</div>
+                  <div class="verdict-class" id="verdictClass">—</div>
+                  <div class="conf-row">
+                    <div class="conf-track"><div class="conf-fill" id="confFill"></div></div>
+                    <div class="conf-text" id="confText"></div>
+                  </div>
+                  <div class="conf-basis" id="confBasis"></div>
+                  <div class="conf-breakdown hidden" id="confBreakdown"></div>
+                </div>
+              </div>
+
+              <div class="signoff">
+                <div class="signoff-row">
+                  <input type="text" id="reviewerName" placeholder="Reviewer / counselor name">
+                  <input type="date" id="reviewDate">
+                  <input type="text" id="reviewSignature" placeholder="Signature / initials">
+                  <button class="signoff-save" onclick="saveReview()">Save sign-off</button>
+                  <span class="signoff-status pending" id="signoffStatus" role="status">Pending counselor review</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-h"><h3>Query interpretation</h3></div>
+              <div class="facts" id="entitiesGrid"></div>
+            </div>
+
+            <div class="section">
+              <div class="section-h"><h3 id="evidenceSectionTitle">Evidence considered</h3></div>
+              <p class="section-sub" id="evidenceSummary" style="margin:0 0 10px;line-height:1.55;"></p>
+              <div class="facts" id="evidenceGrid"></div>
+            </div>
+
+            <div class="section">
+              <div class="section-h"><h3>ACMG-style criteria applied</h3></div>
+              <div class="criteria" id="criteriaList"></div>
+            </div>
+
+            <div class="section">
+              <div class="section-h"><h3>Ranked evidence retrieval</h3><span class="section-sub" id="irSummary"></span></div>
+              <div style="overflow-x:auto;">
+                <table id="topkTable">
+                  <thead><tr><th>#</th><th>Gene : variant</th><th>Match type</th><th>Relevance</th><th>Predictors</th></tr></thead>
+                  <tbody id="topkBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="section">
+              <details>
+                <summary>How this ranking was computed (IR scoring transparency)</summary>
+                <div class="details-body" id="irMetaBody"></div>
+              </details>
+            </div>
+
+            <div class="section">
+              <details open>
+                <summary>Full narrative report</summary>
+                <div class="details-body"><div class="report-text" id="reportTextBody"></div></div>
+              </details>
+            </div>
+
+            <div class="section" id="agenticSection" style="display:none;">
+              <div class="section-h">
+                <h3>Agentic control plane</h3>
+                <span class="section-sub" id="agenticSummary"></span>
+              </div>
+              <div class="tl" id="agenticTimeline"></div>
+              <div class="agentic-grid" id="agenticGrid"></div>
+            </div>
+
+            <div class="section">
+              <details>
+                <summary>Agent pipeline (technical)</summary>
+                <div class="details-body"><div class="steps" id="pipelineSteps"></div></div>
+              </details>
+              <details>
+                <summary>Agent-to-agent audit trail</summary>
+                <div class="details-body" id="auditTrail"></div>
+              </details>
+            </div>
+
+            <div class="foot-disclaimer" id="clinicalDisclaimer"></div>
+            <div class="foot-disclaimer" id="fairnessLimitation" style="display:none;"></div>
+            <div class="foot-disclaimer">VariantLens · IT3041 academic prototype · BRCA1/BRCA2 only · Not for standalone clinical use.</div>
+            <p class="site-foot">&copy; 2026 StatFInity &middot; All rights reserved</p>
+          </div>
+
+          <!-- ===== Query history =====
+               The account's own runs, newest first. A clinician who interpreted a
+               variant last week should be able to get back to it without retyping
+               an HGVS expression -- and reopening deliberately RE-RUNS the query
+               rather than replaying a stored report, so the answer is recomputed
+               against current evidence instead of a copy that has gone stale. -->
+          <section class="history-panel hidden" id="historyPanel">
+            <div class="history-head">
+              <div>
+                <div class="mono eyebrow">Your history</div>
+                <h3 class="history-title">Recent queries</h3>
+              </div>
+              <span class="history-count" id="historyCount"></span>
+            </div>
+            <div class="history-spark" id="historySpark"></div>
+            <div class="history-list" id="historyList"></div>
+          </section>
+
+        </div>
+    </main>
+  </div>
+</section>
+
+<!-- ===== 3. Profile ===== -->
+<section class="view hidden" id="viewProfile">
+  <div class="page-wrap">
+    <button class="back-link" onclick="showView('workspace')">&larr; Back to analysis</button>
+    <h2 class="page-title">Your profile</h2>
+
+    <div class="card">
+      <h3 class="card-title">Account</h3>
+      <div id="pfAccount">
+      <div class="form-grid">
+        <div>
+          <label class="field-label" for="pfUsername">Username</label>
+          <input id="pfUsername" disabled>
+          <p class="field-hint">Cannot be changed &mdash; it is your account identifier.</p>
+        </div>
+        <div>
+          <label class="field-label" for="pfFullName">Full name</label>
+          <input id="pfFullName" placeholder="e.g. Dr Priya Shah" maxlength="120">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div>
+          <label class="field-label" for="pfEmail">Email address</label>
+          <input id="pfEmail" type="email">
+          <p class="field-hint">Used for sign-in and password recovery. Changing it
+             requires your current password.</p>
+        </div>
+        <div>
+          <label class="field-label" for="pfCurrentPw">Current password
+            <span class="opt">only to change email</span></label>
+          <input id="pfCurrentPw" type="password" autocomplete="current-password">
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn-primary" onclick="saveProfile()">Save changes</button>
+        <span class="form-msg" id="pfMsg"></span>
+      </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Password</h3>
+      <div id="pfPassword">
+      <div class="form-grid">
+        <div>
+          <label class="field-label" for="pfOldPw">Current password</label>
+          <input id="pfOldPw" type="password" autocomplete="current-password">
+        </div>
+        <div>
+          <label class="field-label" for="pfNewPw">New password</label>
+          <input id="pfNewPw" type="password" autocomplete="new-password">
+          <p class="field-hint">At least 8 characters.</p>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn-ghost" onclick="changeOwnPassword()">Change password</button>
+        <span class="form-msg" id="pwMsg"></span>
+      </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Your plan</h3>
+      <div id="pfPlanBox"></div>
+    </div>
+
+    <!-- Programmatic access. The endpoint has existed since the API layer was
+         built, but until now the only way to mint a key was to call it by hand,
+         which meant the Professional tier's headline feature was invisible in
+         the product that sells it. -->
+    <div class="card">
+      <h3 class="card-title">API access</h3>
+      <p class="field-hint" id="apiKeysHint"></p>
+      <div id="apiKeysBox"></div>
+      <div class="card-actions" id="apiKeyForm">
+        <input id="apiKeyName" placeholder="Key name, e.g. LIMS integration" maxlength="80">
+        <button class="btn-primary" onclick="createApiKey()">Create key</button>
+      </div>
+      <div class="key-reveal hidden" id="apiKeyReveal">
+        <p class="key-reveal-title">Copy this key now &mdash; it is shown once.</p>
+        <div class="key-reveal-row">
+          <code id="apiKeyValue"></code>
+          <button class="btn-ghost" onclick="copyApiKey()">Copy</button>
+        </div>
+        <p class="field-hint">Only a digest is stored, so a lost key cannot be
+           recovered. Revoke it and mint another.</p>
+      </div>
+    </div>
+
+    <!-- Compliance log. The export endpoint is entitlement-gated server-side;
+         this is the affordance, not the control. -->
+    <div class="card">
+      <h3 class="card-title">Compliance log</h3>
+      <p class="field-hint" id="auditHint"></p>
+      <div class="audit-controls" id="auditForm">
+        <label class="field-label" for="auditStart">From</label>
+        <input type="date" id="auditStart">
+        <label class="field-label" for="auditEnd">To</label>
+        <input type="date" id="auditEnd">
+        <button class="btn-primary" onclick="downloadAudit()">Export CSV</button>
+      </div>
+      <p class="field-hint">Your own query usage, review sign-offs and
+         authentication events. Leave the dates empty to export the full record.</p>
+    </div>
+
+    <div class="tool-foot">
+      <strong>Decision support only.</strong> Not a diagnostic device. Every result is an
+      algorithmic estimate from available evidence and must be reviewed by a qualified
+      genetic counselor or clinical geneticist before informing any clinical decision.
+    </div>
+    <p class="site-foot">&copy; 2026 StatFInity &middot; All rights reserved</p>
+  </div>
+</section>
+<!-- ===== Confirmation dialog =====
+     Replaces window.prompt / window.confirm / window.alert for every decision
+     the user or an administrator makes, so a consequential action always gets a
+     deliberate, readable confirmation rather than a browser popup. -->
+<div class="modal hidden" id="confirmModal" role="dialog" aria-modal="true"
+     aria-labelledby="confirmTitle">
+  <div class="modal-card">
+    <h3 class="modal-title" id="confirmTitle"></h3>
+    <p class="confirm-msg" id="confirmMsg"></p>
+
+    <div class="confirm-note hidden" id="confirmNoteWrap">
+      <label class="field-label" for="confirmNote" id="confirmNoteLabel"></label>
+      <textarea id="confirmNote" rows="4" maxlength="500"></textarea>
+      <div class="note-foot">
+        <span class="field-hint" id="confirmNoteHint"></span>
+        <span class="note-count" id="confirmNoteCount">0 / 500</span>
+      </div>
+    </div>
+
+    <div class="confirm-actions">
+      <button class="btn-ghost" id="confirmCancel" type="button">Cancel</button>
+      <button class="btn-primary" id="confirmOk" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Command palette =====
+     Cmd/Ctrl+K from anywhere. Views, example queries and the report actions,
+     all in one keystroke-reachable list. Everything it triggers has its own
+     button somewhere; this is the shortcut, not a second way of doing things. -->
+<div class="modal hidden" id="paletteModal" role="dialog" aria-modal="true"
+     aria-label="Command palette">
+  <div class="modal-card palette-card">
+    <input class="palette-input" id="paletteInput" type="text" autocomplete="off"
+           placeholder="Search views, examples and actions…" aria-label="Command search">
+    <div class="palette-list" id="paletteList"></div>
+    <div class="palette-hint">
+      <span><kbd class="palette-key">&uarr;</kbd><kbd class="palette-key">&darr;</kbd> navigate</span>
+      <span><kbd class="palette-key">&#9166;</kbd> run</span>
+      <span><kbd class="palette-key">esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 4. Admin ===== -->
+<section class="view hidden" id="viewAdmin">
+  <div class="page-wrap wide">
+    <h2 class="page-title">Administration</h2>
+    <div class="admin-msg" id="adminPageMsg"></div>
+    <div class="stat-row" id="statRow"></div>
+
+    <div class="card">
+      <h3 class="card-title">Query volume &mdash; last 30 days</h3>
+      <div class="chart" id="usageChart"></div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Upgrade requests</h3>
+      <div id="upgradeQueue"></div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Accounts</h3>
+      <p class="field-hint">Select an account to see its 30-day activity and the
+         queries it actually ran. Reading another account's queries is recorded
+         in the audit trail.</p>
+      <div class="plan-cards" id="adminPlanCards"></div>
+      <table class="admin-table">
+        <thead><tr><th>Account</th><th>Plan</th><th>Used</th>
+          <th>Last 30 days</th><th>Active</th></tr></thead>
+        <tbody id="adminUserBody"></tbody>
+      </table>
+      <div class="account-detail hidden" id="accountDetail"></div>
+    </div>
+
+    <div class="tool-foot">
+      <strong>Decision support only.</strong> Not a diagnostic device. Every result is an
+      algorithmic estimate from available evidence and must be reviewed by a qualified
+      genetic counselor or clinical geneticist before informing any clinical decision.
+    </div>
+    <p class="site-foot">&copy; 2026 StatFInity &middot; All rights reserved</p>
+  </div>
+</section>
+
+    </main>
+
+<!-- ===== Mobile navigation =====
+     The phone and tablet menu. It carries the section links AND the account
+     actions, so collapsing the header never makes a destination unreachable.
+
+     It lives outside <header> on purpose: the panel is fixed just below the
+     sticky header rather than nested inside it, which keeps the header element
+     to the identity bar alone and lets the panel be as tall as it needs to be.
+     The two [data-when] groups follow the session exactly as the desktop header
+     does, so there is only one rule for who sees what. -->
+<div class="mobile-nav hidden" id="mobileNav">
+  <nav class="mobile-nav-list" aria-label="Primary mobile">
+    <a href="#top" onclick="goToSection('top');closeMobileNav();return false;">Home</a>
+    <a href="#platform" onclick="goToSection('platform');closeMobileNav();return false;">Platform</a>
+    <a href="#solutions" onclick="goToSection('solutions');closeMobileNav();return false;">Solutions</a>
+    <a href="#how" onclick="goToSection('how');closeMobileNav();return false;">How It Works</a>
+    <a href="#about" onclick="goToSection('about');closeMobileNav();return false;">About</a>
+    <a href="#pricing" onclick="goToSection('pricing');closeMobileNav();return false;">Pricing</a>
+    <a href="#faq" onclick="goToSection('faq');closeMobileNav();return false;">FAQ</a>
+  </nav>
+  <div class="mobile-nav-cta" data-when="out">
+    <button class="btn-primary btn-lg" onclick="closeMobileNav();openAuth('register')">Get Started</button>
+    <button class="btn-ghost btn-lg" onclick="closeMobileNav();openAuth('signin')">Sign in</button>
+  </div>
+  <div class="mobile-nav-cta" data-when="in">
+    <button class="btn-primary btn-lg" onclick="closeMobileNav();showView('workspace')">Analyse a variant</button>
+    <button class="btn-ghost btn-lg" onclick="closeMobileNav();showView('profile')">Your account</button>
+    <button class="btn-ghost btn-lg" onclick="closeMobileNav();logout()">Sign out</button>
+  </div>
+</div>
+
+<!-- ===== Auth modal ===== -->
+<div class="modal hidden" id="authModal" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeAuth()" aria-label="Close">&times;</button>
+    <div class="modal-brand"><span class="brand-mark"></span> VariantLens</div>
+
+    <form class="auth-pane" id="paneSignin" onsubmit="return doLogin(event)">
+      <h3 class="modal-title">Sign in</h3>
+      <label class="field-label" for="loginUsername">Email address</label>
+      <input id="loginUsername" type="email" autocomplete="username" required>
+      <label class="field-label" for="loginPassword">Password</label>
+      <input id="loginPassword" type="password" autocomplete="current-password" required>
+      <button class="btn-primary" type="submit" id="loginBtn">Sign in</button>
+      <div class="auth-error" id="loginError"></div>
+      <div class="modal-foot">
+        <a onclick="openAuth('forgot')">Forgot your password?</a>
+        <span>No account? <a onclick="openAuth('register')">Register</a></span>
+      </div>
+    </form>
+
+    <form class="auth-pane hidden" id="paneRegister" onsubmit="return doRegister(event)">
+      <h3 class="modal-title">Create your account</h3>
+      <label class="field-label" for="regUsername">Username</label>
+      <input id="regUsername" placeholder="letters, digits, . _ -" autocomplete="username" required>
+      <label class="field-label" for="regEmail">Work email</label>
+      <input id="regEmail" type="email" autocomplete="email" required>
+      <label class="field-label" for="regPassword">Password</label>
+      <input id="regPassword" type="password" autocomplete="new-password" required>
+      <button class="btn-primary" type="submit" id="registerBtn">Create account</button>
+      <div class="auth-error" id="registerError"></div>
+      <p class="field-hint">New accounts start on the Free plan: 10 queries a month,
+         rule-based reasoning. No credit card.</p>
+      <div class="modal-foot"><span>Already registered? <a onclick="openAuth('signin')">Sign in</a></span></div>
+    </form>
+
+    <form class="auth-pane hidden" id="paneForgot" onsubmit="return doForgotPassword(event)">
+      <h3 class="modal-title">Reset your password</h3>
+      <p class="field-hint">Enter your email address and we will send a six-digit
+         verification code.</p>
+      <label class="field-label" for="forgotEmail">Email address</label>
+      <input id="forgotEmail" type="email" autocomplete="email" required>
+      <button class="btn-primary" type="submit" id="forgotBtn">Send code</button>
+      <div class="auth-error" id="forgotError"></div>
+      <div class="modal-foot"><a onclick="openAuth('signin')">&larr; Back to sign in</a></div>
+    </form>
+
+    <form class="auth-pane hidden" id="paneReset" onsubmit="return doConfirmReset(event)">
+      <h3 class="modal-title">Choose a new password</h3>
+      <div id="resetDevCode" class="dev-code hidden"></div>
+      <label class="field-label" for="resetCode">Six-digit code</label>
+      <input id="resetCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
+      <label class="field-label" for="resetPassword">New password</label>
+      <input id="resetPassword" type="password" autocomplete="new-password" required>
+      <button class="btn-primary" type="submit" id="resetBtn">Set new password</button>
+      <div class="auth-error" id="resetError"></div>
+      <div class="modal-foot"><a onclick="openAuth('forgot')">Send a new code</a></div>
+    </form>
+  </div>
+</div>
+
+<!-- Transient confirmations. Copying the report and downloading the PDF used to
+     finish in complete silence, so a success was indistinguishable from a click
+     that missed. aria-live so it is announced rather than only shown. -->
+<div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
+<button type="button" class="back-to-top" id="backToTop" onclick="scrollToTop()"
+        aria-label="Back to top" title="Back to top">↑</button>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

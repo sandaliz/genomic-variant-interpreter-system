@@ -11,13 +11,23 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from agents.evidence_agent import EvidenceRetrievalAgent
+from agents.evidence_agent import EvidenceRetrievalAgent, _normalise_hgvs
 from agents.intake_agent import IntakeAgent
 from protocol.message import AgentMessage, MessageLog
 
 
 DATASET_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", "clinvar_variant_dataset.xlsx")
+
+
+class TestNormaliseHgvs:
+    def test_strips_gene_prefix_but_keeps_transcript(self):
+        assert _normalise_hgvs("BRCA2:c.5946delT") == "c.5946del"
+        assert _normalise_hgvs("BRCA1:c.5266dupC") == "c.5266dup"
+        assert _normalise_hgvs("c.5946delT") == "c.5946del"
+        row = _normalise_hgvs("NM_000059.4(BRCA2):c.5946del (p.Ser1982fs)")
+        assert "c.5946del" in row
+        assert _normalise_hgvs("NC_000017.10:g.41197778A>G") == "nc_000017.10:g.41197778a>g"
 
 
 @pytest.fixture
@@ -49,6 +59,27 @@ class TestEvidenceRetrievalAgent:
         assert payload["hgvs"] == "NC_000017.10:g.41197778A>G"
         assert payload["exact_match"] is True
         assert payload["relevance_score"] is not None
+        top = payload["top_k_results"][0]
+        assert top["consequence"] is not None
+        assert top["variant_type"] is not None
+        assert "af_esp" in top
+        assert "prior_classification" in top
+
+    def test_duplication_query_uses_clinvar_fallback_exactly(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        intake_msg = intake_agent.process(
+            "Is BRCA1:c.5266dupC pathogenic?", message_log
+        )
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["found"] is True
+        assert payload["exact_match"] is True
+        assert payload["coverage_fallback"] is True
+        assert payload["hgvs"].lower().find("c.5266dup") >= 0
+        assert payload["prior_classification"] == "Pathogenic"
+        assert int(payload["prior_review_stars"]) == 3
 
     def test_gene_only_retrieval(self, evidence_agent, intake_agent, message_log):
         """Should retrieve variants for a gene with top-K results."""
@@ -85,6 +116,18 @@ class TestEvidenceRetrievalAgent:
 
         assert payload["found"] is True
         assert payload["gene"] == "BRCA1"
+
+    def test_bare_position_uses_variant_summary_fallback(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        """A bare genomic position should resolve through the ClinVar index."""
+        intake_msg = intake_agent.process("41209082", message_log)
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["found"] is True
+        assert payload["query_type"] == "position_only"
+        assert payload["coverage_fallback"] is True
 
     def test_ir_metadata_present(self, evidence_agent, intake_agent, message_log):
         """Should include IR metadata for transparency."""
@@ -149,3 +192,59 @@ class TestEvidenceRetrievalAgent:
         assert payload["exact_match"] is False
         assert "ir_metadata" in payload
         assert payload["ir_metadata"]["candidates_retrieved"] > 0
+
+
+class TestCoverageFallbackFlag:
+    # Regression guard: the flag used to be set only on the record-found path,
+    # so a consumer reading it with .get() saw None instead of False.
+
+    def test_exact_workbook_match_reports_false(self, evidence_agent, intake_agent, message_log):
+        intake_msg = intake_agent.process(
+            "Is BRCA1 NC_000017.10:g.41197778A>G pathogenic?", message_log
+        )
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+        assert payload["coverage_fallback"] is False
+        assert isinstance(payload["coverage_fallback"], bool)
+
+    def test_flag_true_when_resolved_from_clinvar_index(self, evidence_agent, intake_agent, message_log):
+        index_path = os.path.join(os.path.dirname(DATASET_PATH), "variant_summary_brca.tsv")
+        if not os.path.exists(index_path):
+            pytest.skip("variant_summary_brca.tsv not built (see data/DATA_SOURCE.md)")
+
+        # BRCA2 c.5946delT is absent from the study workbook, so the Evidence
+        # Agent must resolve it from the ClinVar coverage index instead.
+        intake_msg = intake_agent.process("Classify BRCA2 c.5946delT", message_log)
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["coverage_fallback"] is True
+        assert payload["evidence_limitation"] is not None
+        assert payload["ir_metadata"]["evidence_source"].startswith("clinvar_variant_summary")
+
+    def test_gene_prefixed_hgvs_still_hits_the_coverage_index(
+        self, evidence_agent, intake_agent, message_log
+    ):
+        """A "GENE:c...." HGVS must not miss the fallback index.
+
+        The index stores transcript-prefixed forms
+        ("nm_000059.4(brca2):c.5946del"), so a gene-prefixed needle
+        ("brca2:c.5946del") is never a substring of a row. The normalizer
+        strips the gene token first; without that, the query fell through
+        to unrelated same-gene rows and scored them 90/100.
+        """
+        index_path = os.path.join(os.path.dirname(DATASET_PATH), "variant_summary_brca.tsv")
+        if not os.path.exists(index_path):
+            pytest.skip("variant_summary_brca.tsv not built (see data/DATA_SOURCE.md)")
+
+        intake_msg = intake_agent.process(
+            "Is BRCA2 BRCA2:c.5946delT pathogenic?", message_log
+        )
+        assert intake_msg.variant_id == "BRCA2:c.5946delT"
+        evidence_msg = evidence_agent.retrieve(intake_msg, message_log)
+        payload = evidence_msg.decrypt_payload()
+
+        assert payload["coverage_fallback"] is True
+        top = payload["top_k_results"][0]
+        assert top["match_type"] == "Exact variant match"
+        assert "5946del" in str(top.get("hgvs", "")).lower()

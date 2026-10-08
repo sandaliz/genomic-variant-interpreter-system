@@ -95,6 +95,12 @@ The classifier keeps three output layers strictly separate:
   Supporting information only; a high CADD score is never itself an ACMG code.
 - `clinvar_context` + `population_observation` — ClinVar submitter agreement
   and the neutral allele-frequency note. Database context, not ACMG criteria.
+- `review_required` + `coverage_fallback` — always-present booleans surfaced in the
+  API response. `review_required` is true when the evidence-based call disagrees with
+  ClinVar's reviewed consensus, so the result is flagged for human review;
+  `coverage_fallback` is true when the variant was resolved from the ClinVar coverage
+  index instead of the study workbook, with `evidence_limitation` explaining the
+  reduced evidence behind the call.
 
 BS1 ("allele frequency greater than expected for the disorder") is
 **unestablished** in this prototype: it requires a validated disease-specific
@@ -177,7 +183,7 @@ uvicorn api:app --reload --port 8000
 ### 4. Run tests
 
 ```bash
-python3 -m pytest tests/ -v    # 67 tests
+python3 -m pytest tests/ -v    # 75 tests
 ```
 
 ### 5. Run evaluation
@@ -195,9 +201,11 @@ jupyter notebook analysis.ipynb
 
 The analysis notebook provides:
 - Data exploration graphs and statistical analysis
-- Model performance visualizations (confusion matrix, ROC curves, feature importance)
-- Information retrieval performance metrics
-- System architecture diagrams
+- Real ClinVar label, review-star and system-performance visualizations
+- Evaluation of the deployed agents against real ClinVar labels (evidence-based vs
+  consensus-reconciled results, directional agreement, predictor completeness)
+- Information retrieval performance metrics (Precision@5, Recall@5, Exact-Match@5, MRR@5)
+- Confidence-score distribution (Responsible AI calibration) and system architecture diagram
 - Presentation materials for Week 6 Mid Evaluation and Week 10 Final Submission
 
 Evaluation reports classification accuracy separately for complete and
@@ -256,6 +264,8 @@ The final submission also includes:
   variants absent from the study workbook).
 - `REVIEW_SIGNOFF_WORKFLOW.md` — human review / sign-off workflow.
 - `ANALYSIS_GUIDE.md` — how to reproduce the analysis notebook and figures.
+- `protocol/PROTOCOL.md` — full agent communication protocol spec (AgentMessage envelope,
+  message types, encryption guarantees, a complete worked message flow, audit-trail API).
 - `frontend/index.html` — responsive clinical-style dashboard with retrieval evidence, ACMG-style codes, responsible-AI controls, audit timeline and PDF actions.
 - `POST /api/report/pdf` — server-generated PDF report with evidence summary and reviewer/sign-off fields.
 
@@ -264,9 +274,15 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
 ## Security Features
 
 - **Input sanitization** (`protocol/security.py`) blocks malformed/malicious queries
-- **API key authentication** before any agent runs
+- **API key authentication** before any agent runs — `POST /api/classify` **requires** a valid key
+  (sent as an `X-API-Key` header, or the `api_key` body field) and returns **401** without one.
+  There is no silent server-side fallback key; the web UI sends the demo key explicitly.
+- **Prompt-injection defense** — a regex blocklist rejects system-prompt overrides,
+  exfiltration, role-hijack and jailbreak phrasing before any NLP or LLM sees the query
 - **Symmetric encryption** — all agent messages encrypted in transit using Fernet
 - **Full audit logging** with trace IDs for every agent-to-agent message
+- **Restricted CORS** — allowed origins are explicit (`FRONTEND_ORIGINS`, defaulting to localhost)
+  rather than `*`
 
 ## Responsible AI
 
@@ -274,7 +290,15 @@ The PDF feature is a **report-generation convenience**, not a claim that the out
 - **Explainability**: every report lists the evidence + ACMG criteria applied
 - **Transparency**: full audit trail with `trace_id` for end-to-end traceability
 - **Data protection**: all messages encrypted in transit
-- **Fairness**: disclosed that population allele frequency databases underrepresent some ancestries
+- **Fairness (explicit limitation)**: every result carries a population-data limitation in its
+  machine-readable `responsible_ai` block, rendered in the UI and the PDF:
+
+  > *Population-data limitation: Allele-frequency databases may have uneven representation across
+  > ancestry groups. Population frequency evidence should therefore be interpreted cautiously and
+  > should not be treated as equally informative for all populations.*
+
+  This is why an intermediate allele frequency is reported as a neutral observation and `BS1` is
+  never auto-assigned.
 - **Strong disclaimer**: every report states it is an academic decision-support prototype, not a clinical diagnosis
 
 ## Commercialization Strategy
@@ -325,7 +349,8 @@ variant_agent_system/
 │   └── gemini_client.py         # Gemini API wrapper (bounded retries, graceful fallback)
 ├── protocol/
 │   ├── message.py               # Agent communication protocol + encryption
-│   └── security.py              # Auth, sanitization, encryption
+│   ├── security.py              # Auth, sanitization, encryption
+│   └── PROTOCOL.md              # Full protocol spec: envelope, flows, audit trail
 ├── scripts/
 │   ├── enrich_clinvar_labels.py          # Join ClinVar labels onto the dataset
 │   └── build_variant_summary_index.py    # Build the BRCA rsID/coverage index
@@ -333,11 +358,12 @@ variant_agent_system/
 │   ├── test_intake_agent.py
 │   ├── test_evidence_agent.py
 │   ├── test_classification_agent.py
+│   ├── test_llm_resilience.py
 │   └── test_security.py
 ├── .env.example                 # Template for API keys
 ├── .gitignore                   # Generated ClinVar artifacts are gitignored
 ├── LICENSE                      # MIT License
-├── analysis.ipynb               # Data analysis & visualization notebook
+├── analysis.ipynb               # Production evaluation & visualization notebook
 ├── analysis_results/            # Generated visualizations for presentations
 ├── api.py                       # FastAPI REST API
 ├── COMPLIANCE_REGULATORY_POSITIONING.md
@@ -354,10 +380,23 @@ scripts in `scripts/` — see `data/DATA_SOURCE.md`.
 
 ## Team / Contributors
 
-| Member | Contribution |
+Each member owned one major subsystem; tests and documentation for that subsystem
+were owned by the same person, so responsibility was evenly distributed.
+
+| Contributor | Primary responsibility |
 |---|---|
-| Member 1 | Intake Agent (NLP + input sanitization), Security module, Intake Agent tests |
-| Member 2 | Evidence Retrieval Agent (TF-IDF indexing, ranking, top-K), Evidence Agent tests |
-| Member 3 | Report Agent (summarization + responsible AI), Frontend UI, REST API layer |
-| Member 4 | Classification Agent (rule-based + LLM reasoning), Gemini client, Classification Agent tests |
+| **Sanulya** | Evidence Retrieval Agent (Information Retrieval: TF-IDF indexing, ranking, top-K) + ClinVar data + `scripts/` |
+| **Nihindu** | Intake Agent (NLP entity extraction + input sanitization) + REST API (`api.py`) + frontend (`frontend/index.html`) |
+| **Nipuni** | Report Agent (summarization + Responsible AI) + Gemini client (`llm/`) + agent communication/security (`protocol/`) |
+| **Sandali** | Classification Agent (ACMG-style rules + LLM reasoning) + orchestration/integration (`main.py`) |
+
+**Supporting work (tests, evaluation and documentation), distributed per component:**
+
+| Contributor | Supporting work |
+|---|---|
+| Sanulya | `tests/test_evidence_agent.py`, dataset provenance (`data/DATA_SOURCE.md`), evaluation support |
+| Nihindu | `tests/test_intake_agent.py`, API/frontend usage docs |
+| Nipuni | `tests/test_llm_resilience.py`, `tests/test_security.py`, protocol specification (`protocol/PROTOCOL.md`) |
+| Sandali | `tests/test_classification_agent.py`, integration tests, overall README and project documentation |
+
 
