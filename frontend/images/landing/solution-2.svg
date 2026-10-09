@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A confidence score broken into the five weighted components that produced it: evidence strength, ClinVar consistency, supporting records, predictor agreement and an unavailable-evidence penalty, summing to 40 or moderate">
+  <!--
+    VariantLens landing imagery - interpretation you can review (solution 02).
+
+    "Confidence: 40" is a number nobody can check. The five components that make
+    it are checkable, so this is the breakdown instead of the badge: each rule,
+    its weight, and the sign it contributed. Diverging bars around a zero axis
+    because the whole design point is that one component subtracts - conflicting
+    ClinVar submitters cost 20 points here, and a chart that only showed positive
+    contributions would be hiding the most interesting thing on it.
+
+    The names and the weights are the ones classify_rule_based computes:
+    evidence strength 0/10/25/40, consistency +10 or -20, supporting records
+    0/8/15/20, predictor agreement 0/5/15/20, and a penalty of 5 per unavailable
+    predictor. This example sums to exactly 40, which is the "moderate" band.
+
+    Canvas is 1200x960, the 3/2.4 the frame asks for, so no crop.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:24px;font-weight:700;letter-spacing:3px;fill:#8A909B}
+      .colhead{font-size:22px;font-weight:700;letter-spacing:1.6px;fill:#8A909B}
+      .comp{font-size:26px;font-weight:600;fill:#20242A}
+      .comp-note{font-size:20px;fill:#8A909B}
+      .val{font-size:30px;font-weight:700}
+      .tick{font-size:20px;fill:#8A909B}
+    </style>
+    <linearGradient id="s2Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#F7F9FC"/>
+      <stop offset="1" stop-color="#EDF1F8"/>
+    </linearGradient>
+    <radialGradient id="s2Glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="s2Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="960" fill="url(#s2Bg)"/>
+  <rect width="1200" height="960" fill="url(#s2Grid)" opacity="0.55"/>
+  <ellipse cx="600" cy="180" rx="620" ry="320" fill="url(#s2Glow)"/>
+
+  <text class="s lbl" x="72" y="96">HOW THE NUMBER WAS EARNED</text>
+  <text class="s" x="72" y="146" font-size="24" fill="#626873">the confidence score, component by component</text>
+
+  <text class="s colhead" x="88" y="216">COMPONENT</text>
+  <text class="s colhead" x="740" y="216" text-anchor="end">CONTRIBUTION</text>
+
+  <!-- The zero axis. Everything is drawn against it, so a penalty reads as a
+       subtraction rather than as a smaller bar. -->
+  <line x1="880" y1="240" x2="880" y2="768" stroke="#D6DAE0" stroke-width="2"/>
+
+  <text class="s comp" x="88" y="292">Evidence strength</text>
+  <text class="s comp-note" x="88" y="324">rule score 2–3 · moderate</text>
+  <text class="m val" x="740" y="296" fill="#3F5F9A" text-anchor="end">+25</text>
+  <rect x="880" y="278" width="150" height="22" rx="4" fill="#3F5F9A"/>
+
+  <text class="s comp" x="88" y="396">ClinVar consistency</text>
+  <text class="s comp-note" x="88" y="428">conflicting submitter evidence</text>
+  <text class="m val" x="740" y="400" fill="#8C6210" text-anchor="end">−20</text>
+  <rect x="760" y="382" width="120" height="22" rx="4" fill="#8C6210"/>
+
+  <text class="s comp" x="88" y="500">Supporting records</text>
+  <text class="s comp-note" x="88" y="532">5 of 5 returned records</text>
+  <text class="m val" x="740" y="504" fill="#3F5F9A" text-anchor="end">+20</text>
+  <rect x="880" y="486" width="120" height="22" rx="4" fill="#3F5F9A"/>
+
+  <text class="s comp" x="88" y="604">Predictor agreement</text>
+  <text class="s comp-note" x="88" y="636">SIFT deleterious · PolyPhen damaging</text>
+  <text class="m val" x="740" y="608" fill="#3F5F9A" text-anchor="end">+20</text>
+  <rect x="880" y="590" width="120" height="22" rx="4" fill="#3F5F9A"/>
+
+  <text class="s comp" x="88" y="708">Unavailable evidence</text>
+  <text class="s comp-note" x="88" y="740">CADD absent — penalised, not ignored</text>
+  <text class="m val" x="740" y="712" fill="#8C6210" text-anchor="end">−5</text>
+  <rect x="850" y="694" width="30" height="22" rx="4" fill="#8C6210"/>
+
+  <text class="s tick" x="1120" y="796" text-anchor="end">+40</text>
+  <text class="s tick" x="880" y="796" text-anchor="middle">0</text>
+  <text class="s tick" x="760" y="796" text-anchor="end">−20</text>
+
+  <!-- The total, against the same 35 / 60 thresholds the engine bands on. -->
+  <rect x="72" y="812" width="1056" height="80" rx="12" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="s lbl" x="100" y="860">CONFIDENCE</text>
+  <text class="m" x="740" y="868" font-size="44" font-weight="700" fill="#8C6210" text-anchor="end">40</text>
+  <text class="s" x="772" y="864" font-size="28" font-weight="600" fill="#8C6210">moderate</text>
+  <rect x="920" y="844" width="208" height="14" rx="7" fill="#F0E4C8"/>
+  <rect x="920" y="844" width="83" height="14" rx="7" fill="#8C6210"/>
+  <line x1="993" y1="838" x2="993" y2="864" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.8"/>
+  <line x1="1045" y1="838" x2="1045" y2="864" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.8"/>
+
+  <text class="s" x="72" y="934" font-size="24" fill="#626873">Each component is a weighted rule in the code, so the number can be re-derived by hand.</text>
+</svg>
