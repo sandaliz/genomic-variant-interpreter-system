@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Stage one: the plain-English query Classify BRCA2 c.5946delT becoming the structured variant gene BRCA2, HGVS c.5946delT, transcript NM_000059.4 and position chr13:32,340,300, marked as screened">
+  <!--
+    VariantLens landing imagery - variant analysis (platform card 01).
+
+    The card's copy promises that a plain-English question becomes a structured
+    variant and that the raw input is screened first, so the picture is exactly
+    that transformation: question, the parse, the four fields intake resolves,
+    and the screening pass. The field names are the ones the pipeline actually
+    fills, and the transcript is BRCA2's real one.
+
+    Card frames are 4/3, which this canvas already is, so nothing is cropped and
+    the full square is usable. At the ~380px these render at, only the query, the
+    values and the pass badge are legible - everything else is hierarchy.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:26px;font-weight:700;letter-spacing:3.4px;fill:#8A909B}
+      .k{font-size:26px;font-weight:600;letter-spacing:1.6px;fill:#8A909B}
+      .v{font-size:40px;font-weight:600;fill:#20242A}
+    </style>
+    <linearGradient id="vaBg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#F7F9FC"/>
+      <stop offset="1" stop-color="#EDF1F8"/>
+    </linearGradient>
+    <radialGradient id="vaGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="vaGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="900" fill="url(#vaBg)"/>
+  <rect width="1200" height="900" fill="url(#vaGrid)" opacity="0.55"/>
+  <ellipse cx="1010" cy="150" rx="420" ry="330" fill="url(#vaGlow)"/>
+
+  <text class="s lbl" x="72" y="96">STAGE 01 · INTAKE</text>
+
+  <!-- What the user typed. -->
+  <rect x="72" y="140" width="1056" height="140" rx="16" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="s" x="112" y="226" font-size="42" font-weight="500" fill="#20242A">Classify BRCA2 c.5946delT</text>
+  <rect x="700" y="200" width="4" height="36" fill="#3F5F9A"/>
+  <text class="s" x="1088" y="182" font-size="22" fill="#8A909B" text-anchor="end">plain English, no syntax</text>
+
+  <!-- The hand-off between stages, drawn as a flow rather than as two cards
+       that merely happen to sit near each other. -->
+  <line x1="600" y1="292" x2="600" y2="356" stroke="#C9D4E6" stroke-width="3"/>
+  <path d="M588,356 h24 l-12,20 z" fill="#C9D4E6"/>
+  <text class="s" x="632" y="336" font-size="24" fill="#8A909B">parsed, then screened</text>
+
+  <!-- What the pipeline resolved it to. -->
+  <rect x="72" y="396" width="1056" height="384" rx="16" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="s lbl" x="112" y="444">STRUCTURED VARIANT</text>
+
+  <text class="s k" x="112" y="508">GENE</text>
+  <text class="s v" x="380" y="508">BRCA2</text>
+  <text class="s k" x="112" y="594">HGVS</text>
+  <text class="m v" x="380" y="594">c.5946delT</text>
+  <text class="s k" x="112" y="680">TRANSCRIPT</text>
+  <text class="m v" x="380" y="680">NM_000059.4</text>
+  <text class="s k" x="112" y="766">POSITION</text>
+  <text class="m v" x="380" y="766">chr13:32,340,300</text>
+
+  <line x1="112" y1="536" x2="1088" y2="536" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="112" y1="622" x2="1088" y2="622" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="112" y1="708" x2="1088" y2="708" stroke="#EFF1F5" stroke-width="2"/>
+
+  <!-- The screening pass. It is the half of this stage that is easy to leave out
+       of a picture and the half that matters, so it is stated, not implied. -->
+  <rect x="72" y="822" width="322" height="60" rx="30" fill="#EAF2ED" stroke="#CDE0D4" stroke-width="2"/>
+  <circle cx="114" cy="852" r="14" fill="#2F6B4F"/>
+  <path d="M107,852.4 l5,5.6 l9,-11" fill="none" stroke="#FFFFFF" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <text class="s" x="142" y="863" font-size="28" font-weight="500" fill="#2F6B4F">Input screened</text>
+  <text class="s" x="440" y="863" font-size="24" fill="#8A909B">before any agent sees the raw string</text>
+</svg>

@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A ranked evidence table: five ClinVar records with the relevance score each was returned for, ClinVar's own classification, its review-status stars, and one record marked as carrying conflicting interpretations">
+  <!--
+    VariantLens landing imagery - evidence you can check (solution card 01).
+
+    The card's promise is that any call can be followed back to the records that
+    produced it. The thing that makes that checkable rather than merely plausible
+    is ClinVar's own review status travelling with each record - stars, submitter
+    count, and whether the submitters disagreed. So the table carries the product's
+    relevance score *and* the source's own verdict, and the row where the two
+    point different ways is the one picked out.
+
+    That row is the honest one: 1,841 of the records in this corpus are conflicting
+    interpretations, which is the figure the About section quotes. A table of
+    five tidy agreements would have been a picture of a different product.
+
+    Canvas is 1200x960, the 3/2.4 the frame asks for, so no crop.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:24px;font-weight:700;letter-spacing:3px;fill:#8A909B}
+      .colhead{font-size:22px;font-weight:700;letter-spacing:1.6px;fill:#8A909B}
+      .rec{font-size:28px;fill:#20242A}
+      .rec-note{font-size:20px;fill:#8A909B}
+      .call{font-size:26px;font-weight:600}
+      .review{font-size:20px;fill:#8A909B}
+      .score{font-size:30px;font-weight:600;fill:#3F5F9A}
+    </style>
+    <linearGradient id="s1Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#F7F9FC"/>
+      <stop offset="1" stop-color="#EDF1F8"/>
+    </linearGradient>
+    <radialGradient id="s1Glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="s1Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+    <!-- One star, reused twenty times. ClinVar's review status is four stars at
+         most, and drawing them is the difference between quoting a source and
+         showing one. -->
+    <path id="st" d="M11,1.6 l2.9,6.2 6.8,.9 -5,4.7 1.3,6.7 -6,-3.3 -6,3.3 1.3,-6.7 -5,-4.7 6.8,-.9 z"/>
+  </defs>
+
+  <rect width="1200" height="960" fill="url(#s1Bg)"/>
+  <rect width="1200" height="960" fill="url(#s1Grid)" opacity="0.55"/>
+  <ellipse cx="600" cy="180" rx="620" ry="320" fill="url(#s1Glow)"/>
+
+  <text class="s lbl" x="72" y="96">RETURNED EVIDENCE</text>
+  <text class="s" x="72" y="146" font-size="24" fill="#626873">the records behind the call, with what ClinVar says about each</text>
+
+  <text class="s colhead" x="88" y="216">RECORD</text>
+  <text class="s colhead" x="560" y="216">CLINVAR CLASSIFICATION</text>
+  <text class="s colhead" x="1128" y="216" text-anchor="end">RELEVANCE</text>
+
+  <!-- Row 1 -->
+  <text class="m rec" x="88" y="296">NM_007294.4:c.5266dupC</text>
+  <text class="s rec-note" x="88" y="332">Exact variant match</text>
+  <circle cx="572" cy="288" r="8" fill="#A33A2E"/>
+  <text class="s call" x="594" y="296" fill="#A33A2E">Pathogenic</text>
+  <use href="#st" x="560" y="312" fill="#8C6210"/>
+  <use href="#st" x="588" y="312" fill="#8C6210"/>
+  <use href="#st" x="616" y="312" fill="#8C6210"/>
+  <use href="#st" x="644" y="312" fill="#D6DAE0"/>
+  <text class="s review" x="684" y="332">reviewed by expert panel</text>
+  <text class="m score" x="1128" y="296" text-anchor="end">0.98</text>
+  <rect x="1008" y="308" width="120" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="1008" y="308" width="118" height="9" rx="4.5" fill="#3F5F9A"/>
+
+  <!-- Row 2 -->
+  <text class="m rec" x="88" y="424">rs80357906</text>
+  <text class="s rec-note" x="88" y="460">Exact variant match</text>
+  <circle cx="572" cy="416" r="8" fill="#A33A2E"/>
+  <text class="s call" x="594" y="424" fill="#A33A2E">Pathogenic</text>
+  <use href="#st" x="560" y="440" fill="#8C6210"/>
+  <use href="#st" x="588" y="440" fill="#8C6210"/>
+  <use href="#st" x="616" y="440" fill="#D6DAE0"/>
+  <use href="#st" x="644" y="440" fill="#D6DAE0"/>
+  <text class="s review" x="684" y="460">multiple submitters</text>
+  <text class="m score" x="1128" y="424" text-anchor="end">0.91</text>
+  <rect x="1008" y="436" width="120" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="1008" y="436" width="109" height="9" rx="4.5" fill="#3F5F9A"/>
+
+  <!-- Row 3. The disagreement, kept visible: a light field and a bar down the
+       left edge, because this is the row the card is about. -->
+  <rect x="72" y="504" width="1056" height="128" fill="#FDF9F1"/>
+  <rect x="72" y="504" width="6" height="128" fill="#8C6210"/>
+  <text class="m rec" x="88" y="552">chr17:41,244,442</text>
+  <text class="s rec-note" x="88" y="588">Same genomic position</text>
+  <circle cx="572" cy="544" r="8" fill="#8C6210"/>
+  <text class="s call" x="594" y="552" fill="#8C6210">Conflicting</text>
+  <use href="#st" x="560" y="568" fill="#8C6210"/>
+  <use href="#st" x="588" y="568" fill="#D6DAE0"/>
+  <use href="#st" x="616" y="568" fill="#D6DAE0"/>
+  <use href="#st" x="644" y="568" fill="#D6DAE0"/>
+  <text class="s review" x="684" y="588">conflicting interpretations</text>
+  <text class="m score" x="1128" y="552" fill="#8C6210" text-anchor="end">0.86</text>
+  <rect x="1008" y="564" width="120" height="9" rx="4.5" fill="#F0E4C8"/>
+  <rect x="1008" y="564" width="103" height="9" rx="4.5" fill="#8C6210"/>
+
+  <!-- Row 4 -->
+  <text class="m rec" x="88" y="680">c.5123C&gt;A</text>
+  <text class="s rec-note" x="88" y="716">Same gene</text>
+  <circle cx="572" cy="672" r="8" fill="#8C6210"/>
+  <text class="s call" x="594" y="680" fill="#8C6210">Uncertain significance</text>
+  <use href="#st" x="560" y="696" fill="#8C6210"/>
+  <use href="#st" x="588" y="696" fill="#D6DAE0"/>
+  <use href="#st" x="616" y="696" fill="#D6DAE0"/>
+  <use href="#st" x="644" y="696" fill="#D6DAE0"/>
+  <text class="s review" x="684" y="716">single submitter</text>
+  <text class="m score" x="1128" y="680" text-anchor="end">0.74</text>
+  <rect x="1008" y="692" width="120" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="1008" y="692" width="89" height="9" rx="4.5" fill="#3F5F9A"/>
+
+  <!-- Row 5 -->
+  <text class="m rec" x="88" y="808">c.5946delT</text>
+  <text class="s rec-note" x="88" y="844">TF-IDF cosine similarity</text>
+  <circle cx="572" cy="800" r="8" fill="#2F6B4F"/>
+  <text class="s call" x="594" y="808" fill="#2F6B4F">Benign</text>
+  <use href="#st" x="560" y="824" fill="#8C6210"/>
+  <use href="#st" x="588" y="824" fill="#8C6210"/>
+  <use href="#st" x="616" y="824" fill="#D6DAE0"/>
+  <use href="#st" x="644" y="824" fill="#D6DAE0"/>
+  <text class="s review" x="684" y="844">multiple submitters</text>
+  <text class="m score" x="1128" y="808" text-anchor="end">0.61</text>
+  <rect x="1008" y="820" width="120" height="9" rx="4.5" fill="#E9EEF6"/>
+  <rect x="1008" y="820" width="73" height="9" rx="4.5" fill="#3F5F9A"/>
+
+  <line x1="72" y1="248" x2="1128" y2="248" stroke="#E8E8E8" stroke-width="2"/>
+  <line x1="72" y1="376" x2="1128" y2="376" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="632" x2="1128" y2="632" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="760" x2="1128" y2="760" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="72" y1="888" x2="1128" y2="888" stroke="#E8E8E8" stroke-width="2"/>
+
+  <text class="s" x="72" y="936" font-size="24" fill="#626873">A conflicting record is shown as conflicting, not resolved into a label.</text>
+</svg>

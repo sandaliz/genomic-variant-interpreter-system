@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A query history chart for the last fourteen days above two panels: an authenticated API call carrying an X-API-Key header, and the history, audit-export and key-issue endpoints">
+  <!--
+    VariantLens landing imagery - a workflow that scales (solution 03).
+
+    The card lists three things a laboratory needs after the first interesting
+    result: the account's own history, an export for review, and a door for the
+    systems it already runs. So the picture is those three and nothing else -
+    a fortnight of queries, the API call, and the endpoints.
+
+    The endpoint paths, the GET/POST methods and the X-API-Key header are the
+    real ones from api.py and auth/dependencies.py. X-API-Key rather than a
+    bearer token on purpose: the card is about machine clients, and that is the
+    header a machine client uses.
+
+    Canvas is 1200x960, the 3/2.4 the frame asks for, so no crop.
+  -->
+  <defs>
+    <style>
+      .s{font-family:Manrope,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+      .m{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}
+      .lbl{font-size:24px;font-weight:700;letter-spacing:3px;fill:#8A909B}
+      .card-lbl{font-size:22px;font-weight:700;letter-spacing:2.4px;fill:#8A909B}
+      .note{font-size:20px;fill:#8A909B}
+      .axis{font-size:20px;fill:#8A909B}
+    </style>
+    <linearGradient id="s3Bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#F7F9FC"/>
+      <stop offset="1" stop-color="#EDF1F8"/>
+    </linearGradient>
+    <radialGradient id="s3Glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3F5F9A" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#3F5F9A" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="s3Grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60,0 H0 V60" fill="none" stroke="#DDE4EF" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="960" fill="url(#s3Bg)"/>
+  <rect width="1200" height="960" fill="url(#s3Grid)" opacity="0.55"/>
+  <ellipse cx="600" cy="180" rx="620" ry="320" fill="url(#s3Glow)"/>
+
+  <text class="s lbl" x="72" y="96">A WORKFLOW THAT SCALES</text>
+  <text class="s" x="72" y="146" font-size="24" fill="#626873">the account's own record, and the door its other systems come through</text>
+
+  <!-- ===== History ===== -->
+  <rect x="72" y="196" width="1056" height="360" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="s card-lbl" x="104" y="244">QUERY HISTORY</text>
+  <text class="s note" x="1096" y="244" text-anchor="end">last 14 days · 12 of 100 this month</text>
+
+  <line x1="104" y1="396" x2="1096" y2="396" stroke="#EFF1F5" stroke-width="2"/>
+  <line x1="104" y1="496" x2="1096" y2="496" stroke="#D6DAE0" stroke-width="2"/>
+
+  <!-- Fourteen days, one bar each, the quiet days left as a stub rather than a
+       gap: an idle day is still a day the account did not spend. -->
+  <rect x="110" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="182" y="490" width="44" height="6" rx="3" fill="#E9EEF6"/>
+  <rect x="254" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="326" y="296" width="44" height="200" rx="6" fill="#C9D4E6"/>
+  <rect x="398" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="470" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="542" y="490" width="44" height="6" rx="3" fill="#E9EEF6"/>
+  <rect x="614" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="686" y="296" width="44" height="200" rx="6" fill="#C9D4E6"/>
+  <rect x="758" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="830" y="490" width="44" height="6" rx="3" fill="#E9EEF6"/>
+  <rect x="902" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="974" y="396" width="44" height="100" rx="6" fill="#C9D4E6"/>
+  <rect x="1046" y="490" width="44" height="6" rx="3" fill="#E9EEF6"/>
+
+  <text class="s axis" x="104" y="528">14 days ago</text>
+  <text class="s axis" x="1096" y="528" text-anchor="end">today</text>
+
+  <!-- ===== The API ===== -->
+  <rect x="72" y="584" width="508" height="296" rx="14" fill="#142B4A"/>
+  <text class="s card-lbl" x="104" y="632" fill="#A9BBD6">AUTHENTICATED API</text>
+  <text class="m" x="104" y="692" font-size="24" font-weight="700" fill="#FFFFFF">POST /api/classify</text>
+  <text class="m" x="104" y="736" font-size="20" fill="#AFC0DA">X-API-Key: vl_live_8f3c1d</text>
+  <text class="m" x="104" y="780" font-size="20" fill="#8FB0E0">200 · verdict, criteria, trace id</text>
+  <text class="s" x="104" y="844" font-size="20" fill="#8A909B">machine clients · quota enforced per key</text>
+
+  <!-- ===== The endpoints ===== -->
+  <rect x="612" y="584" width="516" height="296" rx="14" fill="#FFFFFF" stroke="#E8E8E8" stroke-width="2"/>
+  <text class="s card-lbl" x="644" y="632">RECORD &amp; EXPORT</text>
+
+  <rect x="644" y="664" width="76" height="34" rx="8" fill="#3F5F9A"/>
+  <text class="s" x="682" y="687" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">GET</text>
+  <text class="m" x="740" y="692" font-size="24" fill="#20242A">/api/history</text>
+  <text class="s note" x="740" y="720">every query this account has run</text>
+
+  <rect x="644" y="730" width="76" height="34" rx="8" fill="#3F5F9A"/>
+  <text class="s" x="682" y="753" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">GET</text>
+  <text class="m" x="740" y="758" font-size="24" fill="#20242A">/api/export/audit</text>
+  <text class="s note" x="740" y="786">the trail, for review or inspection</text>
+
+  <rect x="644" y="796" width="76" height="34" rx="8" fill="#142B4A"/>
+  <text class="s" x="682" y="819" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">POST</text>
+  <text class="m" x="740" y="824" font-size="24" fill="#20242A">/api/keys</text>
+  <text class="s note" x="740" y="852">issue a key to another system</text>
+
+  <text class="s" x="72" y="934" font-size="24" fill="#626873">History and export are scoped to the account that ran the queries.</text>
+</svg>
