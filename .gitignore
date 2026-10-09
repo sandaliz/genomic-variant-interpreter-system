@@ -25,12 +25,6 @@ dist/
 build/
 *.egg
 
-# # Analysis notebook outputs
-# analysis_results/
-# .ipynb_checkpoints/
-
-# # Jupyter notebook
-# *.ipynb_checkpoints
 # Local human-review demo records
 data/review_signoffs.json
 
@@ -41,4 +35,10 @@ data/clinvar_GRCh37.vcf.gz
 # Coverage-fallback source data (443 MB ClinVar dump + the BRCA index derived
 # from it; rebuild the index with scripts/build_variant_summary_index.py)
 data/variant_summary.txt.gz
+data/clinvar_variant_dataset_enriched.xlsx
 data/clinvar_variant_dataset_enriched_tfidf_cache.pkl
+
+# Alembic generates __pycache__ next to migrations; already covered by the
+# generic __pycache__/ rule above but listed explicitly so nobody
+# force-adds it by accident.
+migrations/**/__pycache__/
