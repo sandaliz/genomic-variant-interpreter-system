@@ -40,18 +40,21 @@ Two report modes:
      output is guided by the system instruction to never overstate confidence.
 
 Security: decrypts the incoming message payload, and encrypts its own
-outgoing payload (encryption in transit between agents).
+outgoing payload (Fernet encryption within the same process).
 """
 
 import sys
 import os
 import json
+import logging
 import math
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from protocol.message import AgentMessage, MessageType
 from llm.gemini_client import GeminiClient
+
+logger = logging.getLogger(__name__)
 
 
 def _is_directional_conflict(evidence: dict) -> bool:
@@ -76,6 +79,51 @@ class ReportAgent:
         self.llm = GeminiClient(fast_mode=fast_mode, enable_llm_cache=enable_llm_cache)
         self.batch_llm = batch_llm  # Combine summarization + report generation
 
+    # Marker the template path always appends, and the post-check below
+    # appends to an LLM report that dropped it. A single source so the two
+    # paths can never disagree on the wording.
+    TEMPLATE_DISCLAIMER = (
+        "IMPORTANT DISCLAIMER: This is an academic decision-support prototype. "
+        "It does not provide medical diagnoses or replace qualified genetic "
+        "counselors, clinicians, or laboratory interpretation. Genetic test "
+        "results must always be interpreted within the broader context of a "
+        "patient's clinical and family history by a qualified healthcare "
+        "professional. This tool is not intended for standalone clinical use."
+    )
+
+    @staticmethod
+    def verify_llm_report(report_text: str, classification: str,
+                           confidence: str, confidence_numeric) -> list:
+        """Check an LLM-written report carries the right call and disclaimer.
+
+        The prompt asks for all three, but asking is not verifying. Returns a
+        list of issue strings (empty = clean) covering: the classification
+        label appears verbatim, the numeric confidence appears, and the
+        decision-support disclaimer is present. Cheap regex/substring checks,
+        not a second LLM judge.
+        """
+        issues = []
+        text = report_text or ""
+        if classification and str(classification) not in text:
+            issues.append("classification label missing or altered")
+        try:
+            numeric_token = str(float(confidence_numeric)).rstrip("0").rstrip(".")
+        except (TypeError, ValueError):
+            numeric_token = None
+        if numeric_token and numeric_token not in text:
+            issues.append("confidence number missing or altered")
+        if "decision-support" not in text.lower() and "decision support" not in text.lower():
+            issues.append("decision-support disclaimer missing")
+        return issues
+
+    @classmethod
+    def ensure_disclaimer(cls, report_text: str) -> str:
+        """Append the template disclaimer when the LLM dropped it."""
+        if "decision-support" in (report_text or "").lower() or \
+                "decision support" in (report_text or "").lower():
+            return report_text
+        return (report_text or "").rstrip() + "\n\n" + cls.TEMPLATE_DISCLAIMER
+
     @staticmethod
     def _display(value):
         if value is None:
@@ -92,12 +140,14 @@ class ReportAgent:
     # ------------------------------------------------------------------
     def summarize_evidence(self, evidence: dict) -> str:
         """
-        NLP technique: extractive summarization of the evidence bundle.
+        NLP technique: structured evidence summarization of the evidence bundle.
 
         Condenses the raw evidence dict into a concise, human-readable
         summary that highlights the most clinically relevant facts.
-        This is a deterministic extractive summarizer (no LLM needed),
-        which is transparent and auditable.
+        This is a deterministic data-to-text summarizer (no LLM needed),
+        which is transparent and auditable: it renders labelled fields rather
+        than extracting sentences, so it is described as structured
+        summarization rather than extractive summarization.
         """
         if not evidence.get("found"):
             return "No matching evidence record found in the database."
@@ -113,11 +163,14 @@ class ReportAgent:
             parts.append(f"Predicted impact: {impact}")
 
         # Computational predictors
-        parts.append(f"SIFT prediction: {self._display(evidence.get('sift_prediction'))}")
-        parts.append(f"PolyPhen prediction: {self._display(evidence.get('polyphen_prediction'))}")
-
-        # CADD score
-        parts.append(f"CADD score: {self._display(evidence.get('cadd_score'))}")
+        for label, key in (
+            ("SIFT prediction", "sift_prediction"),
+            ("PolyPhen prediction", "polyphen_prediction"),
+            ("CADD score", "cadd_score"),
+        ):
+            value = evidence.get(key)
+            if self._display(value) != "not available":
+                parts.append(f"{label}: {value}")
 
         # Population frequency
         frequencies = [
@@ -126,8 +179,8 @@ class ReportAgent:
                 evidence.get("af_tgp"), evidence.get("af_gnomad"),
             ) if value is not None
         ]
-        max_af = max(frequencies) if frequencies else "not available"
-        parts.append(f"Max population allele frequency: {max_af}")
+        if frequencies:
+            parts.append(f"Max population allele frequency: {max(frequencies)}")
 
         # Conflicting classification (direction-aware -- see helper above)
         conflict = _is_directional_conflict(evidence)
@@ -155,7 +208,7 @@ class ReportAgent:
 
         Sends the evidence + classification to Gemini and asks it to
         produce a concise 2-3 sentence clinical summary. Falls back to
-        the extractive summarizer if the LLM call fails.
+        the structured summarizer if the LLM call fails.
         """
         evidence_summary = json.dumps(evidence, indent=2, default=str)
         result_summary = json.dumps(result, indent=2, default=str)
@@ -181,8 +234,8 @@ class ReportAgent:
                 max_tokens=200,  # Reduced from 300 for faster response
             )
             return summary.strip()
-        except (RuntimeError, ConnectionError, TimeoutError) as e:
-            # Fallback to extractive summarization for API/Network errors
+        except (RuntimeError, ConnectionError, TimeoutError):
+            # Fallback to structured summarization for API/Network errors
             return self.summarize_evidence(evidence)
 
     # ------------------------------------------------------------------
@@ -206,6 +259,20 @@ class ReportAgent:
                 "certified genetic counselor."
             )
         else:
+            intent = evidence.get("intent", "classification")
+            if intent != "classification":
+                focused = self._generate_focused_evidence_report(
+                    evidence, result, variant_id, intent, top_k_results or []
+                )
+                # Keep the focused answer concise at the top, but retain the
+                # complete auditable interpretation for users who need the
+                # confidence, criteria, and retrieval context.
+                full_evidence = dict(evidence)
+                full_evidence["intent"] = "classification"
+                complete = self.generate_report_template(
+                    full_evidence, result, variant_id, top_k_results
+                )
+                return focused + "\n\nCOMPLETE VARIANT INTERPRETATION\n" + complete
             # Classification result
             classification = result.get("classification", "Unknown")
             confidence = result.get("confidence", "none")
@@ -247,21 +314,28 @@ class ReportAgent:
             lines.append("Evidence considered:")
             lines.append(f"  - Gene: {evidence.get('gene')}")
             lines.append(f"  - Variant: {evidence.get('hgvs')}")
-            lines.append(f"  - Variant consequence: {self._display(evidence.get('consequence'))}")
-            lines.append(f"  - Predicted impact: {self._display(evidence.get('impact'))}")
-            lines.append(f"  - SIFT prediction: {self._display(evidence.get('sift_prediction'))}")
-            lines.append(f"  - PolyPhen prediction: {self._display(evidence.get('polyphen_prediction'))}")
-            lines.append(f"  - CADD score: {self._display(evidence.get('cadd_score'))}")
+            available_fields = (
+                ("Variant consequence", evidence.get("consequence")),
+                ("Variant type", evidence.get("variant_type")),
+                ("Predicted impact", evidence.get("impact")),
+                ("SIFT prediction", evidence.get("sift_prediction")),
+                ("PolyPhen prediction", evidence.get("polyphen_prediction")),
+                ("CADD score", evidence.get("cadd_score")),
+            )
+            for label, value in available_fields:
+                if self._display(value) != "not available":
+                    lines.append(f"  - {label}: {value}")
             frequencies = [
                 value for value in (
                     evidence.get("af_esp"), evidence.get("af_exac"),
                     evidence.get("af_tgp"), evidence.get("af_gnomad"),
                 ) if value is not None
             ]
-            lines.append(
-                "  - Population frequency (max across ESP/ExAC/1000G/gnomAD): "
-                + (str(max(frequencies)) if frequencies else "not available")
-            )
+            if frequencies:
+                lines.append(
+                    "  - Population frequency (max across ESP/ExAC/1000G/gnomAD): "
+                    + str(max(frequencies))
+                )
             conflict = _is_directional_conflict(evidence)
             if evidence.get("prior_classification"):
                 lines.append(
@@ -321,12 +395,43 @@ class ReportAgent:
             components = result.get("confidence_components", {})
             if components:
                 lines.append("Confidence breakdown:")
-                lines.append(f"  - Evidence strength: {components.get('evidence_strength', 'N/A')}/40")
+                lines.append(f"  - Rule evidence: {components.get('evidence_strength', 'N/A')}/30")
                 lines.append("  - Submitter consistency: "
                              + str(components.get("clinvar_consistency", "N/A")).replace("_", " "))
-                lines.append(f"  - Supporting records: {components.get('supporting_records', 'N/A')}/20")
-                lines.append("  - Predictor agreement: "
-                             + str(components.get("predictor_agreement", "N/A")).replace("_", " "))
+                lines.append(f"  - Retrieval quality: {components.get('retrieval_quality', 'N/A')}/20")
+                lines.append(f"  - Predictor evidence: {components.get('predictor_score', 'N/A')}/20")
+                lines.append(f"  - Allele-frequency evidence: {components.get('allele_frequency_points', 'N/A')}/10")
+                if result.get("independent_evidence_confidence_numeric") is not None:
+                    lines.append(
+                        "  - Independent evidence confidence: "
+                        f"{result['independent_evidence_confidence_numeric']}/100"
+                    )
+                if result.get("consensus_confidence_numeric") is not None:
+                    lines.append(
+                        "  - Consensus confidence: "
+                        f"{result['consensus_confidence_numeric']}/100"
+                    )
+                # The bars above are the scorer's raw inputs. When the
+                # Verifier capped the headline, say so with both numbers —
+                # otherwise full components next to a low headline read as
+                # a contradiction.
+                if result.get("confidence_revised"):
+                    before = result.get("confidence_before_revision")
+                    shown = result.get("confidence_numeric")
+                    if before is not None:
+                        lines.append(
+                            f"  - Verifier cap: scored {before}/100 from the "
+                            f"inputs above; headline lowered to {shown}/100 "
+                            "because that confidence was not earned by an "
+                            "exact match or reviewed consensus."
+                        )
+                    else:
+                        lines.append(
+                            "  - Verifier cap: the headline was lowered from "
+                            "the score implied above because that confidence "
+                            "was not earned by an exact match or reviewed "
+                            "consensus."
+                        )
                 lines.append("")
 
             # Responsible AI: confidence ≠ medical certainty
@@ -381,15 +486,90 @@ class ReportAgent:
                 )
 
             lines.append("")
-            lines.append(
-                "IMPORTANT DISCLAIMER: This is an academic decision-support prototype. "
-                "It does not provide medical diagnoses or replace qualified genetic "
-                "counselors, clinicians, or laboratory interpretation. Genetic test "
-                "results must always be interpreted within the broader context of a "
-                "patient's clinical and family history by a qualified healthcare "
-                "professional. This tool is not intended for standalone clinical use."
-            )
+            lines.append(self.TEMPLATE_DISCLAIMER)
 
+        return "\n".join(lines)
+
+    def _generate_focused_evidence_report(
+        self, evidence: dict, result: dict, variant_id: str, intent: str,
+        top_k_results: list,
+    ) -> str:
+        """Answer a specific evidence question instead of repeating a verdict."""
+        labels = {
+            "population_frequency": "Population frequency",
+            "protein_impact": "Protein and functional impact",
+            "variant_consequence": "Variant consequence",
+            "prior_classifications": "Prior classifications and expert agreement",
+        }
+        title = labels.get(intent, "Requested evidence")
+        lines = [
+            f"{title}: {variant_id}",
+            "=" * 50,
+        ]
+        if not evidence.get("found"):
+            lines.append("No matching evidence record was found in the database.")
+        elif intent == "population_frequency":
+            frequencies = [
+                value for value in (
+                    evidence.get("af_esp"), evidence.get("af_exac"),
+                    evidence.get("af_tgp"), evidence.get("af_gnomad"),
+                ) if value is not None
+            ]
+            if frequencies:
+                maximum = max(frequencies)
+                interpretation = (
+                    "This is relatively common in the available population data."
+                    if maximum > 0.001 else
+                    "This is rare in the available population data."
+                )
+                lines.append(f"Maximum observed allele frequency: {maximum}")
+                lines.append(interpretation)
+                lines.append(
+                    "Frequency alone is not a diagnosis or a complete benign "
+                    "classification; ancestry coverage and disease-specific "
+                    "thresholds must be considered."
+                )
+            else:
+                lines.append("Population allele-frequency data is not available.")
+                lines.append(
+                    "The system cannot determine whether this variant is common "
+                    "from the indexed evidence."
+                )
+        elif intent == "protein_impact":
+            for label, key in (
+                ("Variant consequence", "consequence"),
+                ("Predicted impact", "impact"),
+                ("SIFT", "sift_prediction"),
+                ("PolyPhen", "polyphen_prediction"),
+                ("CADD", "cadd_score"),
+            ):
+                value = evidence.get(key)
+                if self._display(value) != "not available":
+                    lines.append(f"{label}: {value}")
+        elif intent == "variant_consequence":
+            for label, key in (
+                ("Variant consequence", "consequence"),
+                ("Variant type", "variant_type"),
+                ("Predicted impact", "impact"),
+            ):
+                value = evidence.get(key)
+                if self._display(value) != "not available":
+                    lines.append(f"{label}: {value}")
+        elif intent == "prior_classifications":
+            lines.extend([
+                f"ClinVar classification: {self._display(evidence.get('prior_classification'))}",
+                f"Review status: {self._display(evidence.get('prior_review_status'))}",
+                "Submitter agreement: " + (
+                    "conflicting"
+                    if _is_directional_conflict(evidence) else "no directional conflict recorded"
+                ),
+            ])
+        lines.extend([
+            "",
+            "This focused answer reports the requested evidence and does not "
+            "replace a complete variant interpretation.",
+            self.TEMPLATE_DISCLAIMER,
+        ])
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -455,7 +635,24 @@ class ReportAgent:
                 system_instruction=system_instruction,
                 max_tokens=768,  # Reduced from 1024 for faster response
             )
-            return report.strip()
+            # Post-check, not just prompt-asking: verify the LLM carried the
+            # right classification, the numeric confidence and the disclaimer.
+            # A dropped disclaimer is repaired; other issues fall back to the
+            # template so a wrong number can never ship unverified.
+            issues = self.verify_llm_report(
+                report, result.get("classification", ""),
+                result.get("confidence", ""),
+                result.get("confidence_numeric", 0.0),
+            )
+            if issues and issues != ["decision-support disclaimer missing"]:
+                fallback = self.generate_report_template(
+                    evidence, result, variant_id, top_k_results=top_k_results
+                )
+                return (
+                    f"[LLM report failed verification ({'; '.join(issues)}); "
+                    "using template report]\n\n" + fallback
+                )
+            return self.ensure_disclaimer(report.strip())
         except (RuntimeError, ConnectionError, TimeoutError) as e:
             # Fallback to template for API/Network errors
             fallback = self.generate_report_template(
@@ -535,16 +732,19 @@ class ReportAgent:
             response_dict = json.loads(cleaned)
             
             return (
-                response_dict.get("report_text", ""),
+                self.ensure_disclaimer(response_dict.get("report_text", "")),
                 response_dict.get("evidence_summary", "")
             )
             
         except (RuntimeError, ConnectionError, TimeoutError, json.JSONDecodeError) as e:
-            # Fallback to separate calls if batch fails
-            print(f"[report_agent] Batch LLM failed, using separate calls: {e}")
+            # Never retry with a second LLM request. Preserve a fast,
+            # complete deterministic report when the single call fails.
+            logger.warning("Batch LLM failed, using template report: %s", e)
             return (
-                self.generate_report_with_llm(evidence, result, variant_id, top_k_results),
-                self.summarize_with_llm(evidence, result)
+                self.generate_report_template(
+                    evidence, result, variant_id, top_k_results=top_k_results
+                ),
+                self.summarize_evidence(evidence),
             )
 
     # ------------------------------------------------------------------
@@ -642,6 +842,7 @@ class ReportAgent:
         # as "the answer" would misrepresent what was asked and could be
         # misread as a statement about the gene as a whole. ---
         if evidence.get("query_type") == "gene_only":
+            report_mode = "rule_based"
             report_text = self.generate_gene_overview_report(evidence, result)
             evidence_summary = (
                 f"Showing the {len(top_k_results)} most evidence-complete of "
@@ -652,18 +853,14 @@ class ReportAgent:
         # --- NLP: Summarization step ---
         # Generate a concise summary of the evidence (extractive or abstractive)
         elif self.use_llm and self.llm.available:
-            if self.batch_llm:
-                # Use batch LLM call for both summary and report
-                report_text, evidence_summary = self.generate_report_with_llm_batch(
-                    evidence, result, variant_id, top_k_results=top_k_results
-                )
-            else:
-                # Separate LLM calls
-                evidence_summary = self.summarize_with_llm(evidence, result)
-                report_text = self.generate_report_with_llm(
-                    evidence, result, variant_id, top_k_results=top_k_results
-                )
+            report_mode = "llm_explanation"
+            # One Gemini call returns both the evidence summary and narrative.
+            # The deterministic classification above remains authoritative.
+            report_text, evidence_summary = self.generate_report_with_llm_batch(
+                evidence, result, variant_id, top_k_results=top_k_results
+            )
         else:
+            report_mode = "rule_based"
             evidence_summary = self.summarize_evidence(evidence)
             report_text = self.generate_report_template(
                 evidence, result, variant_id, top_k_results=top_k_results
@@ -682,6 +879,13 @@ class ReportAgent:
                 "classification": result.get("classification", ""),
                 "confidence": result.get("confidence", "none"),
                 "confidence_numeric": result.get("confidence_numeric", 0.0),
+                "independent_evidence_confidence_numeric": result.get(
+                    "independent_evidence_confidence_numeric"
+                ),
+                "consensus_confidence_numeric": result.get(
+                    "consensus_confidence_numeric"
+                ),
+                "confidence_source": result.get("confidence_source"),
                 "responsible_ai": result.get("responsible_ai", {}),
                 "criteria_applied": result.get("criteria_applied", []),
                 "acmg_criteria_applied": result.get("acmg_criteria_applied", result.get("criteria_applied", [])),
@@ -689,6 +893,7 @@ class ReportAgent:
                 "clinvar_context": result.get("clinvar_context", []),
                 "population_observation": result.get("population_observation"),
                 "reasoning_mode": result.get("reasoning_mode", "rule_based"),
+                "report_mode": report_mode,
                 "ir_metadata": evidence.get("ir_metadata", {}),
             },
         )
