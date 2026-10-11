@@ -21,7 +21,7 @@ alembic==1.20.0
 
 # --- accounts ---
 PyJWT==2.15.1
-jwcrypto==1.5.6
+jwcrypto==1.5.7
 pwdlib[argon2]==0.3.1
 email-validator==2.3.0
 
@@ -31,7 +31,7 @@ numpy==2.3.5
 openpyxl==3.1.5
 scikit-learn==1.8.0
 reportlab==4.4.9
-cryptography==46.0.4
+cryptography==50.0.0
 google-genai==2.18.1
 
 # --- MCP tool server (OPTIONAL) ---
